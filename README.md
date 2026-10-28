@@ -158,15 +158,29 @@ every time Wireless debugging is turned on, so read it off the watch each time.
 
 ### From a terminal
 
+Run Gradle commands **from the project folder** (the one containing `gradlew` and
+`settings.gradle.kts`), not from your home folder. Easiest: in Android Studio open the
+**Terminal** tab at the bottom, which already starts in the project folder.
+
+**Windows (PowerShell):** PowerShell only runs scripts in the current folder if you prefix them with `.\`:
+```powershell
+cd C:\path\to\Basketball_App
+```
+```powershell
+.\gradlew.bat :app:installDebug
+```
+
+**macOS / Linux:**
 ```bash
 ./gradlew :app:installDebug
 ```
-(On Windows use `gradlew.bat :app:installDebug`.)
 
-Run the pure-Kotlin unit tests (no watch needed):
+Run the pure-Kotlin unit tests (no watch needed), `.\gradlew.bat :core:test` on Windows:
 ```bash
 ./gradlew :core:test
 ```
+
+`installDebug` installs to whatever `adb devices` lists, so connect the watch first (section 3.3).
 
 > **Library versions** are all in `gradle/libs.versions.toml`. If Android Studio offers to
 > upgrade the Android Gradle Plugin or a library, it's safe to accept, then sync again.
