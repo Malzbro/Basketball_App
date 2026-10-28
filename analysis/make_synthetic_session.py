@@ -1,0 +1,101 @@
+#!/usr/bin/env python3
+"""Makes a FAKE session in the watch's file format, for testing the analysis code.
+
+The motion is invented (simple shapes for walking, dribbling and shots). Use it
+only to check that the scripts run; never to choose thresholds.
+
+    python make_synthetic_session.py --out ../data/synthetic --minutes 10
+    python analyze_session.py ../data/synthetic
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+from datetime import datetime
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
+RATE_HZ = 100
+G = 9.81
+
+
+def bump(t: np.ndarray, center: float, width: float) -> np.ndarray:
+    return np.exp(-0.5 * ((t - center) / width) ** 2)
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--out", default="../data/synthetic")
+    ap.add_argument("--minutes", type=float, default=10)
+    ap.add_argument("--seed", type=int, default=7)
+    args = ap.parse_args()
+    rng = np.random.default_rng(args.seed)
+
+    n = int(args.minutes * 60 * RATE_HZ)
+    t = np.arange(n) / RATE_HZ
+    acc = np.zeros((n, 3)) + rng.normal(0, 0.15, (n, 3))
+    gyro = rng.normal(0, 0.05, (n, 3))
+    pitch = np.full(n, -10.0)  # forearm slightly down at rest
+
+    # Walking between shots: steps at ~1.8 Hz.
+    walking = (np.sin(2 * np.pi * t / 37) > 0.3).astype(float)
+    acc[:, 2] += walking * 2.0 * np.sin(2 * np.pi * 1.8 * t)
+    gyro[:, 1] += walking * 1.0 * np.sin(2 * np.pi * 0.9 * t)
+
+    # Dribbling bursts: sharp hand pumps at ~2 Hz.
+    for start in np.arange(15, t[-1] - 10, 47):
+        for k in range(int(rng.integers(6, 14))):
+            c = start + k * 0.5
+            acc[:, 1] += 9.0 * bump(t, c, 0.05)
+            gyro[:, 0] += 4.0 * bump(t, c, 0.06)
+
+    # Shots: dip -> drive -> wrist flick -> quiet hold. Labels 1.5-4 s later.
+    events = []
+    for c in np.arange(8, t[-1] - 6, 22) + rng.uniform(-3, 3, len(np.arange(8, t[-1] - 6, 22))):
+        acc[:, 2] -= 3.5 * bump(t, c - 0.55, 0.12)          # dip
+        acc[:, 2] += rng.uniform(8, 12) * bump(t, c - 0.15, 0.1)  # drive
+        gyro[:, 2] += rng.uniform(9, 14) * bump(t, c, 0.04)  # release flick
+        pitch += 60 * bump(t, c, 0.35)                       # arm raised
+        quiet = (t > c + 0.1) & (t < c + 0.6)
+        gyro[quiet] *= 0.3
+        label = "make" if rng.random() < 0.45 else "miss"
+        events.append((c + rng.uniform(1.5, 4.0), label))
+
+    p = np.radians(pitch)
+    grav = np.stack([G * np.sin(p), np.zeros(n), G * np.cos(p)], axis=1)
+    acc += grav
+
+    start_ns = 123_456_789_000
+    t_ns = start_ns + (t * 1e9).astype(np.int64) + 1_000_000
+    raw = pd.DataFrame({
+        "t_ns": t_ns, "t_rel_s": ((t_ns - start_ns) / 1e9).round(4),
+        "ax": acc[:, 0], "ay": acc[:, 1], "az": acc[:, 2],
+        "gx": gyro[:, 0], "gy": gyro[:, 1], "gz": gyro[:, 2],
+        "grav_x": grav[:, 0], "grav_y": grav[:, 1], "grav_z": grav[:, 2],
+        "qx": 0.0, "qy": 0.0, "qz": 0.0, "qw": 1.0,
+    }).round(4)
+
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    prefix = f"session_{stamp}"
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    raw.to_csv(out / f"{prefix}_raw.csv", index=False)
+    ev_ns = [start_ns + int(e * 1e9) for e, _ in events]
+    pd.DataFrame({
+        "t_ns": ev_ns,
+        "t_rel_s": [round((x - start_ns) / 1e9, 4) for x in ev_ns],
+        "wall_time": ["synthetic"] * len(events),
+        "label": [lab for _, lab in events],
+        "source": ["button"] * len(events),
+    }).to_csv(out / f"{prefix}_events.csv", index=False)
+    (out / f"{prefix}_meta.json").write_text(json.dumps({
+        "session_id": prefix, "device_model": "SYNTHETIC", "android_sdk": 0, "start_wall_time": stamp,
+    }, indent=2))
+    print(f"Wrote {len(raw)} samples and {len(events)} labels to {out}/{prefix}_*")
+
+
+if __name__ == "__main__":
+    main()
