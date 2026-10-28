@@ -1,8 +1,8 @@
-package dev.malzbro.wristshot.ui
+package dev.malzbro.wristshot.core.util
 
 import java.util.Locale
 
-/** 75 000 ms -> "01:15", 3 725 000 ms -> "1:02:05". */
+/** 75 000 ms -> "01:15", 3 725 000 ms -> "1:02:05". Negative values show as "00:00". */
 fun formatElapsed(ms: Long): String {
     val totalS = (ms / 1000).coerceAtLeast(0)
     val h = totalS / 3600

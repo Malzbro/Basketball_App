@@ -1,9 +1,11 @@
 package dev.malzbro.wristshot.recording
 
+import android.os.SystemClock
 import dev.malzbro.wristshot.config.AppConfig
 import dev.malzbro.wristshot.core.model.EventLabel
 import dev.malzbro.wristshot.core.model.EventSource
 import dev.malzbro.wristshot.core.session.SessionCounts
+import dev.malzbro.wristshot.core.session.SessionMetadata
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -20,7 +22,7 @@ data class SessionUiState(
     val lastLabel: EventLabel? = null,
     /** elapsedRealtime() ms when [lastLabel] was entered, to flash it briefly. */
     val lastLabelAtMs: Long = 0L,
-    val lastSession: SessionSummary? = null,
+    val lastSession: SessionMetadata? = null,
     val backKeyMarksShot: Boolean = AppConfig.BACK_KEY_MARKS_SHOT_DEFAULT,
     val error: String? = null,
 )
@@ -55,9 +57,9 @@ object SessionRepository {
         _state.update { it.copy(samplesWritten = samplesWritten) }
     }
 
-    internal fun onStopped(summary: SessionSummary?) {
+    internal fun onStopped(metadata: SessionMetadata?) {
         recorder = null
-        _state.update { it.copy(isRecording = false, lastSession = summary ?: it.lastSession) }
+        _state.update { it.copy(isRecording = false, lastSession = metadata ?: it.lastSession) }
     }
 
     internal fun onError(message: String) {
@@ -72,11 +74,12 @@ object SessionRepository {
      * Writes a labeled event if a session is recording.
      * @return true if the label was recorded (so the caller can give haptic feedback).
      */
-    fun label(label: EventLabel, source: EventSource, nowElapsedMs: Long): Boolean {
+    fun label(label: EventLabel, source: EventSource): Boolean {
         val r = recorder ?: return false
         r.logEvent(label, source)
+        val now = SystemClock.elapsedRealtime()
         _state.update {
-            it.copy(counts = it.counts.plus(label), lastLabel = label, lastLabelAtMs = nowElapsedMs)
+            it.copy(counts = it.counts.plus(label), lastLabel = label, lastLabelAtMs = now)
         }
         return true
     }

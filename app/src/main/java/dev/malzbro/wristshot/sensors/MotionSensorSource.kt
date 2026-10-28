@@ -28,23 +28,25 @@ class MotionSensorSource(
     onSample: (RawSample) -> Unit,
 ) : SensorEventListener {
 
-    private val accel: Sensor? = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
-    private val gyro: Sensor? = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
-    private val gravity: Sensor? = sensorManager.getDefaultSensor(Sensor.TYPE_GRAVITY)
-    private val rotation: Sensor? = sensorManager.getDefaultSensor(Sensor.TYPE_GAME_ROTATION_VECTOR)
+    /** The sensors this watch actually has, by role (in [WANTED] order). */
+    private val available: Map<String, Sensor> = buildMap {
+        for ((role, type) in WANTED) sensorManager.getDefaultSensor(type)?.let { put(role, it) }
+    }
+
+    private fun has(type: Int) = available.values.any { it.type == type }
 
     private val aligner = StreamAligner(
-        hasGyro = gyro != null,
-        hasGravity = gravity != null,
-        hasRotation = rotation != null,
+        hasGyro = has(Sensor.TYPE_GYROSCOPE),
+        hasGravity = has(Sensor.TYPE_GRAVITY),
+        hasRotation = has(Sensor.TYPE_GAME_ROTATION_VECTOR),
         onSample = onSample,
     )
 
-    val hasAccelerometer: Boolean get() = accel != null
+    val hasAccelerometer: Boolean get() = has(Sensor.TYPE_ACCELEROMETER)
 
     /** Start listening. Callbacks (and therefore onSample) run on [handler]'s thread. */
     fun start(handler: Handler) {
-        for (sensor in listOfNotNull(accel, gyro, gravity, rotation)) {
+        for (sensor in available.values) {
             sensorManager.registerListener(
                 this,
                 sensor,
@@ -80,22 +82,25 @@ class MotionSensorSource(
     override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) = Unit
 
     /** Sensor names/ranges for the session's meta.json. */
-    fun describe(): List<SensorDescription> = listOf(
-        "accelerometer" to accel,
-        "gyroscope" to gyro,
-        "gravity" to gravity,
-        "game_rotation_vector" to rotation,
-    ).mapNotNull { (role, s) ->
-        s?.let {
-            SensorDescription(
-                role = role,
-                name = it.name,
-                vendor = it.vendor,
-                type = it.type,
-                maxRange = it.maximumRange.toDouble(),
-                resolution = it.resolution.toDouble(),
-                minDelayUs = it.minDelay,
-            )
-        }
+    fun describe(): List<SensorDescription> = available.map { (role, s) ->
+        SensorDescription(
+            role = role,
+            name = s.name,
+            vendor = s.vendor,
+            type = s.type,
+            maxRange = s.maximumRange.toDouble(),
+            resolution = s.resolution.toDouble(),
+            minDelayUs = s.minDelay,
+        )
+    }
+
+    private companion object {
+        /** Sensor role (as written to meta.json) -> Android sensor type. */
+        val WANTED = listOf(
+            "accelerometer" to Sensor.TYPE_ACCELEROMETER,
+            "gyroscope" to Sensor.TYPE_GYROSCOPE,
+            "gravity" to Sensor.TYPE_GRAVITY,
+            "game_rotation_vector" to Sensor.TYPE_GAME_ROTATION_VECTOR,
+        )
     }
 }

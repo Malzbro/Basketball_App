@@ -15,29 +15,20 @@ import dev.malzbro.wristshot.core.model.RawSample
  *  - t_rel_s: seconds since the session started (t_ns - session start), for reading.
  */
 object CsvFormat {
-    val RAW_COLUMNS = listOf(
-        "t_ns", "t_rel_s",
-        "ax", "ay", "az",
-        "gx", "gy", "gz",
-        "grav_x", "grav_y", "grav_z",
-        "qx", "qy", "qz", "qw",
-    )
+    private val TIME_COLUMNS = listOf("t_ns", "t_rel_s")
 
-    val EVENT_COLUMNS = listOf("t_ns", "t_rel_s", "wall_time", "label", "source")
+    val RAW_COLUMNS = TIME_COLUMNS + RawSample.VALUE_COLUMNS
+
+    val EVENT_COLUMNS = TIME_COLUMNS + listOf("wall_time", "label", "source")
 
     val RAW_HEADER: String = RAW_COLUMNS.joinToString(",")
     val EVENTS_HEADER: String = EVENT_COLUMNS.joinToString(",")
 
     fun appendRawRow(sb: StringBuilder, s: RawSample, sessionStartNs: Long) {
-        sb.append(s.tNs).append(',')
-        appendFixed(sb, (s.tNs - sessionStartNs) / 1e9, RecorderConfig.CSV_TIME_DECIMALS)
-        val d = RecorderConfig.CSV_VALUE_DECIMALS
-        for (v in doubleArrayOf(
-            s.ax, s.ay, s.az, s.gx, s.gy, s.gz,
-            s.gravX, s.gravY, s.gravZ, s.qx, s.qy, s.qz, s.qw,
-        )) {
+        appendTimes(sb, s.tNs, sessionStartNs)
+        s.forEachValue { v ->
             sb.append(',')
-            appendFixed(sb, v, d)
+            appendFixed(sb, v, RecorderConfig.CSV_VALUE_DECIMALS)
         }
         sb.append('\n')
     }
@@ -50,13 +41,18 @@ object CsvFormat {
         source: EventSource,
     ): String {
         val sb = StringBuilder()
-        sb.append(tNs).append(',')
-        appendFixed(sb, (tNs - sessionStartNs) / 1e9, RecorderConfig.CSV_TIME_DECIMALS)
+        appendTimes(sb, tNs, sessionStartNs)
         sb.append(',').append(wallTimeIso)
         sb.append(',').append(label.csvName)
         sb.append(',').append(source.csvName)
         sb.append('\n')
         return sb.toString()
+    }
+
+    /** The two time columns shared by both files: t_ns, t_rel_s. */
+    private fun appendTimes(sb: StringBuilder, tNs: Long, sessionStartNs: Long) {
+        sb.append(tNs).append(',')
+        appendFixed(sb, (tNs - sessionStartNs) / 1e9, RecorderConfig.CSV_TIME_DECIMALS)
     }
 
     /**

@@ -10,12 +10,10 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
 import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
 import androidx.wear.compose.material.Chip
@@ -29,12 +27,11 @@ import androidx.wear.compose.material.TimeText
 import androidx.wear.compose.material.ToggleChip
 import androidx.wear.tooling.preview.devices.WearDevices
 import dev.malzbro.wristshot.config.AppConfig
+import dev.malzbro.wristshot.core.session.SessionMetadata
+import dev.malzbro.wristshot.core.util.formatElapsed
 import dev.malzbro.wristshot.recording.SessionUiState
 import kotlinx.coroutines.delay
 import java.util.Locale
-
-private val StartGreen = Color(0xFF2E7D32)
-private val StopRed = Color(0xFFC62828)
 
 @Composable
 fun HomeScreen(
@@ -53,40 +50,30 @@ fun HomeScreen(
             item {
                 Text(
                     text = if (state.isRecording) "● REC" else "WristShot",
-                    color = if (state.isRecording) StopRed else MaterialTheme.colors.primary,
+                    color = if (state.isRecording) WristShotColors.Stop else MaterialTheme.colors.primary,
                     fontWeight = FontWeight.Bold,
                 )
             }
             item {
                 Text(
                     text = formatElapsed(rememberSessionElapsedMs(state)),
-                    fontSize = 34.sp,
+                    fontSize = WristShotText.Timer,
                     fontWeight = FontWeight.Medium,
                 )
             }
             item {
                 val c = state.counts
-                Text(
-                    text = "Shots ${c.shots}   ✓${c.makes}  ✗${c.misses}",
-                    style = MaterialTheme.typography.body1,
-                )
+                Text(text = "Shots ${c.shots}   ✓${c.makes}  ✗${c.misses}", style = MaterialTheme.typography.body1)
             }
             item {
-                if (state.isRecording) {
-                    Chip(
-                        onClick = onStop,
-                        label = { Text("Stop session") },
-                        colors = ChipDefaults.primaryChipColors(backgroundColor = StopRed),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                } else {
-                    Chip(
-                        onClick = onStart,
-                        label = { Text("Start session") },
-                        colors = ChipDefaults.primaryChipColors(backgroundColor = StartGreen),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
+                Chip(
+                    onClick = if (state.isRecording) onStop else onStart,
+                    label = { Text(if (state.isRecording) "Stop session" else "Start session") },
+                    colors = ChipDefaults.primaryChipColors(
+                        backgroundColor = if (state.isRecording) WristShotColors.Stop else WristShotColors.Go,
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                )
             }
             if (state.isRecording) {
                 item {
@@ -110,22 +97,25 @@ fun HomeScreen(
                 )
             }
             state.error?.let { error ->
-                item { Text(text = error, color = StopRed, textAlign = TextAlign.Center) }
+                item { Text(text = error, color = WristShotColors.Stop, textAlign = TextAlign.Center) }
             }
             state.lastSession?.let { last ->
-                item {
-                    Text(
-                        text = "Last session\n${last.sessionId.removePrefix("session_")}\n" +
-                            "${formatElapsed((last.durationS * 1000).toLong())} · ${last.counts.shots} shots\n" +
-                            String.format(Locale.US, "%.0f Hz · %d gaps", last.meanRateHz, last.dropouts),
-                        style = MaterialTheme.typography.caption2,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.padding(top = 4.dp),
-                    )
-                }
+                item { LastSessionText(last) }
             }
         }
     }
+}
+
+@Composable
+private fun LastSessionText(last: SessionMetadata) {
+    Text(
+        text = "Last session\n${last.sessionId.removePrefix("session_")}\n" +
+            "${formatElapsed((last.durationS * 1000).toLong())} · ${last.counts.shots} shots\n" +
+            String.format(Locale.US, "%.0f Hz · %d gaps", last.meanSampleRateHz, last.dropouts),
+        style = MaterialTheme.typography.caption2,
+        textAlign = TextAlign.Center,
+        modifier = Modifier.padding(top = 4.dp),
+    )
 }
 
 /** Milliseconds since the session started, refreshed a couple of times per second. */

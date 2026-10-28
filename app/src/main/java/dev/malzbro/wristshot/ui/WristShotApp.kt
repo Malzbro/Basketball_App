@@ -2,6 +2,7 @@ package dev.malzbro.wristshot.ui
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.platform.LocalView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.navigation.SwipeDismissableNavHost
@@ -19,6 +20,7 @@ private object Routes {
 fun WristShotApp(onStartSession: () -> Unit, onStopSession: () -> Unit) {
     val state by SessionRepository.state.collectAsStateWithLifecycle()
     val navController = rememberSwipeDismissableNavController()
+    val view = LocalView.current
 
     MaterialTheme {
         SwipeDismissableNavHost(navController = navController, startDestination = Routes.HOME) {
@@ -35,7 +37,11 @@ fun WristShotApp(onStartSession: () -> Unit, onStopSession: () -> Unit) {
                 )
             }
             composable(Routes.LABEL) {
-                LabelScreen(state = state, onDone = { navController.popBackStack() })
+                LabelScreen(
+                    state = state,
+                    onDone = { navController.popBackStack() },
+                    onLabel = { label, source -> view.recordLabelWithHaptic(label, source) },
+                )
             }
         }
     }

@@ -83,35 +83,30 @@ class SessionRecorder(
         handler.post { guarded { writer.writeEvent(tNs, wall, label, source) } }
     }
 
-    /** Stops sensors, writes everything left, closes files and writes meta.json. */
-    fun stop(counts: SessionCounts): SessionSummary {
+    /**
+     * Stops sensors, writes everything left, closes files and writes meta.json.
+     * @return the session's metadata, or null if writing did not finish in time.
+     */
+    fun stop(counts: SessionCounts): SessionMetadata? {
         sensors.stop()
         val stopElapsedNs = SystemClock.elapsedRealtimeNanos()
         val done = CountDownLatch(1)
+        var metadata: SessionMetadata? = null
         handler.post {
             handler.removeCallbacks(periodicFlush)
             guarded {
                 sensors.flushPending()
                 writer.close()
-                files.meta.writeText(buildMetadata(stopElapsedNs, counts).toJson())
+                // Built on the recorder thread, after the last sample, so the stats are final.
+                metadata = buildMetadata(stopElapsedNs, counts).also { files.meta.writeText(it.toJson()) }
             }
             done.countDown()
         }
-        if (!done.await(AppConfig.STOP_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
-            Log.w(TAG, "Timed out waiting for recorder thread to finish writing")
-        }
+        val finished = done.await(AppConfig.STOP_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        if (!finished) Log.w(TAG, "Timed out waiting for recorder thread to finish writing")
         thread.quitSafely()
-
-        val stats = writer.stats
-        return SessionSummary(
-            sessionId = files.id,
-            folder = files.raw.parent.orEmpty(),
-            durationS = (stopElapsedNs - startElapsedNs) / 1e9,
-            sampleCount = stats.count,
-            meanRateHz = stats.meanRateHz,
-            dropouts = stats.dropouts,
-            counts = counts,
-        )
+        // The latch makes the recorder thread's write to `metadata` visible here.
+        return if (finished) metadata else null
     }
 
     private val periodicFlush = object : Runnable {

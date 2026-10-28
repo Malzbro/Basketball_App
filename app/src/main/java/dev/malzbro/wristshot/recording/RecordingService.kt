@@ -1,7 +1,5 @@
 package dev.malzbro.wristshot.recording
 
-import android.app.NotificationChannel
-import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
@@ -12,13 +10,8 @@ import android.os.IBinder
 import android.os.PowerManager
 import android.os.SystemClock
 import android.util.Log
-import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
-import androidx.wear.ongoing.OngoingActivity
-import androidx.wear.ongoing.Status
-import dev.malzbro.wristshot.MainActivity
-import dev.malzbro.wristshot.R
 import dev.malzbro.wristshot.config.AppConfig
 import dev.malzbro.wristshot.core.config.RecorderConfig
 
@@ -81,8 +74,7 @@ class RecordingService : Service() {
     private fun stopRecording() {
         val r = recorder
         recorder = null
-        val summary = r?.stop(SessionRepository.state.value.counts)
-        SessionRepository.onStopped(summary)
+        SessionRepository.onStopped(r?.stop(SessionRepository.state.value.counts))
         shutDown()
     }
 
@@ -100,55 +92,20 @@ class RecordingService : Service() {
     }
 
     private fun startInForeground(startElapsedMs: Long) {
-        val manager = getSystemService(NotificationManager::class.java)
-        manager.createNotificationChannel(
-            NotificationChannel(
-                AppConfig.NOTIFICATION_CHANNEL_ID,
-                getString(R.string.channel_recording),
-                NotificationManager.IMPORTANCE_LOW,
+        val notification = RecordingNotification.build(
+            context = this,
+            startElapsedMs = startElapsedMs,
+            stopIntent = PendingIntent.getService(
+                this, 0, serviceIntent(this, ACTION_STOP),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
             ),
         )
-
-        val openApp = PendingIntent.getActivity(
-            this, 0,
-            Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-        )
-        val stop = PendingIntent.getService(
-            this, 1,
-            Intent(this, RecordingService::class.java).setAction(ACTION_STOP),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-        )
-
-        val builder = NotificationCompat.Builder(this, AppConfig.NOTIFICATION_CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_ball)
-            .setContentTitle(getString(R.string.notif_title))
-            .setContentText(getString(R.string.notif_text))
-            .setCategory(NotificationCompat.CATEGORY_WORKOUT)
-            .setOngoing(true)
-            .setOnlyAlertOnce(true)
-            .setContentIntent(openApp)
-            .addAction(R.drawable.ic_ball, getString(R.string.notif_stop), stop)
-            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
-
-        // Wear OS "ongoing activity": shows a live stopwatch on the watch face / recents.
-        val status = Status.Builder()
-            .addTemplate("#time#")
-            .addPart("time", Status.StopwatchPart(startElapsedMs))
-            .build()
-        OngoingActivity.Builder(applicationContext, AppConfig.NOTIFICATION_ID, builder)
-            .setStaticIcon(R.drawable.ic_ball)
-            .setTouchIntent(openApp)
-            .setStatus(status)
-            .build()
-            .apply(applicationContext)
-
         val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH
         } else {
             ServiceInfo.FOREGROUND_SERVICE_TYPE_MANIFEST
         }
-        ServiceCompat.startForeground(this, AppConfig.NOTIFICATION_ID, builder.build(), type)
+        ServiceCompat.startForeground(this, AppConfig.NOTIFICATION_ID, notification, type)
     }
 
     companion object {
@@ -157,14 +114,14 @@ class RecordingService : Service() {
         private const val ACTION_STOP = "dev.malzbro.wristshot.action.STOP"
 
         fun start(context: Context) {
-            ContextCompat.startForegroundService(
-                context,
-                Intent(context, RecordingService::class.java).setAction(ACTION_START),
-            )
+            ContextCompat.startForegroundService(context, serviceIntent(context, ACTION_START))
         }
 
         fun stop(context: Context) {
-            context.startService(Intent(context, RecordingService::class.java).setAction(ACTION_STOP))
+            context.startService(serviceIntent(context, ACTION_STOP))
         }
+
+        private fun serviceIntent(context: Context, action: String): Intent =
+            Intent(context, RecordingService::class.java).setAction(action)
     }
 }

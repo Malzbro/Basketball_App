@@ -32,6 +32,8 @@ data class SessionMetadata(
     val dropouts: Int,
     val counts: SessionCounts,
 ) {
+    val durationS: Double get() = (stopElapsedNs - startElapsedNs) / 1e9
+
     /** Hand-written JSON so the core module needs no libraries. */
     fun toJson(): String = buildString {
         append("{\n")
@@ -42,7 +44,7 @@ data class SessionMetadata(
         field("start_wall_time", str(startWallTime))
         field("start_elapsed_ns", startElapsedNs.toString())
         field("stop_elapsed_ns", stopElapsedNs.toString())
-        field("duration_s", num((stopElapsedNs - startElapsedNs) / 1e9))
+        field("duration_s", num(durationS))
         field("requested_sampling_period_us", requestedSamplingPeriodUs.toString())
         field("max_report_latency_us", maxReportLatencyUs.toString())
         field("sample_count", sampleCount.toString())

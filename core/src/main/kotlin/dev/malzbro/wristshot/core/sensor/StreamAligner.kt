@@ -40,18 +40,14 @@ class StreamAligner(
         drain(force = false)
     }
 
-    fun onGyro(tNs: Long, x: Float, y: Float, z: Float) {
-        gyro?.add(tNs, x, y, z)
-        drain(force = false)
-    }
+    fun onGyro(tNs: Long, x: Float, y: Float, z: Float) = addSecondary(gyro, tNs, x, y, z)
 
-    fun onGravity(tNs: Long, x: Float, y: Float, z: Float) {
-        gravity?.add(tNs, x, y, z)
-        drain(force = false)
-    }
+    fun onGravity(tNs: Long, x: Float, y: Float, z: Float) = addSecondary(gravity, tNs, x, y, z)
 
-    fun onRotation(tNs: Long, x: Float, y: Float, z: Float, w: Float) {
-        rotation?.add(tNs, x, y, z, w)
+    fun onRotation(tNs: Long, x: Float, y: Float, z: Float, w: Float) = addSecondary(rotation, tNs, x, y, z, w)
+
+    private fun addSecondary(stream: Stream?, tNs: Long, vararg values: Float) {
+        stream?.add(tNs, values)
         drain(force = false)
     }
 
@@ -98,7 +94,7 @@ class StreamAligner(
     private inner class Stream(private val size: Int) {
         private val readings = ArrayDeque<Reading>()
 
-        fun add(tNs: Long, vararg v: Float) {
+        fun add(tNs: Long, v: FloatArray) {
             readings.addLast(Reading(tNs, DoubleArray(size) { v[it].toDouble() }))
             while (readings.size > maxBuffered) readings.removeFirst()
         }
