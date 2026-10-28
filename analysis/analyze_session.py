@@ -25,17 +25,15 @@ from dataclasses import asdict, fields, replace
 from pathlib import Path
 
 import matplotlib
-
 import numpy as np
 import pandas as pd
 
 import detector_proto as dp
 import wristshot_io as wio
 
-LABEL_COLORS = {"make": "tab:green", "miss": "tab:red", "shot": "tab:gray"}
-SNIPPET_HALF_WIDTH_S = 1.5
-MAX_SNIPPETS = 40
 SWEEP_STEPS = 25
+FEATURE_COLUMNS = ["peak_gyro", "peak_accel_drive", "min_accel_dip", "dip_to_release_s", "hold_s",
+                   "pitch_at_release_deg"]
 
 
 def parse_args() -> argparse.Namespace:
@@ -71,83 +69,7 @@ def print_score(s: dict) -> None:
     print(f"precision {s['precision']:.2f} | recall {s['recall']:.2f} | F1 {s['f1']:.2f}")
 
 
-def plot_overview(raw, events, detections, s, p, title, path):
-    import matplotlib.pyplot as plt
-
-    fig, axes = plt.subplots(3, 1, figsize=(16, 9), sharex=True)
-    axes[0].plot(raw.t, raw.acc_mag, lw=0.6, color="tab:blue")
-    axes[0].axhline(wio.STANDARD_GRAVITY, color="k", lw=0.5, ls=":")
-    axes[0].axhline(p.drive_accel_min, color="tab:orange", lw=0.8, ls="--", label="drive_accel_min")
-    axes[0].set_ylabel("|accel| m/s²")
-    axes[1].plot(raw.t, raw.gyro_mag, lw=0.6, color="tab:purple")
-    axes[1].axhline(p.release_gyro_min, color="tab:orange", lw=0.8, ls="--", label="release_gyro_min")
-    axes[1].set_ylabel("|gyro| rad/s")
-    axes[2].plot(raw.t, raw.pitch_deg, lw=0.6, color="tab:brown")
-    axes[2].set_ylabel("forearm pitch °")
-    axes[2].set_xlabel("time since start (s)")
-
-    for _, e in events.iterrows():
-        for ax in axes:
-            ax.axvline(e.t, color=LABEL_COLORS.get(e.label, "k"), lw=1.0, alpha=0.7)
-    accepted = detections[detections.accepted].reset_index(drop=True) if len(detections) else detections
-    matched = {di for di, _ in s["pairs"]}
-    for di, d in accepted.iterrows():
-        ok = di in matched
-        axes[1].plot(d.t_release, d.peak_gyro, "^" if ok else "x", ms=8,
-                     color="tab:green" if ok else "tab:red")
-    rejected = detections[~detections.accepted] if len(detections) else detections
-    axes[1].plot(rejected.t_release, rejected.peak_gyro, "o", mfc="none", color="gray", ms=6)
-
-    axes[0].legend(loc="upper right")
-    axes[1].legend(loc="upper right")
-    axes[0].set_title(title + "\nvertical lines = your labels (green make, red miss, gray shot?) | "
-                      "▲ detected & matched, ✕ false positive, ○ rejected candidate")
-    fig.tight_layout()
-    fig.savefig(path, dpi=110)
-    return fig
-
-
-def plot_snippets(raw, shots, path):
-    """Every labeled shot, aligned at its release peak: shows how consistent the motion is."""
-    import matplotlib.pyplot as plt
-
-    fig, axes = plt.subplots(2, 1, figsize=(10, 7), sharex=True)
-    t = raw.t.to_numpy()
-    for _, sh in shots.head(MAX_SNIPPETS).iterrows():
-        m = (t >= sh.t_release - SNIPPET_HALF_WIDTH_S) & (t <= sh.t_release + SNIPPET_HALF_WIDTH_S)
-        color = LABEL_COLORS.get(sh.label, "k")
-        axes[0].plot(t[m] - sh.t_release, raw.acc_mag.to_numpy()[m], color=color, alpha=0.4, lw=0.8)
-        axes[1].plot(t[m] - sh.t_release, raw.gyro_mag.to_numpy()[m], color=color, alpha=0.4, lw=0.8)
-    axes[0].set_ylabel("|accel| m/s²")
-    axes[1].set_ylabel("|gyro| rad/s")
-    axes[1].set_xlabel("seconds relative to release (biggest gyro peak before each label)")
-    axes[0].set_title(f"{min(len(shots), MAX_SNIPPETS)} labeled shots aligned at release (green make, red miss)")
-    for ax in axes:
-        ax.axvline(0, color="k", lw=0.6, ls=":")
-    fig.tight_layout()
-    fig.savefig(path, dpi=110)
-    return fig
-
-
-def main() -> None:
-    args = parse_args()
-    if not args.show:
-        matplotlib.use("Agg")
-
-    paths = wio.find_session(args.session)
-    raw = wio.load_raw(paths.raw)
-    events = wio.load_events(paths.events, raw.attrs["start_ns"])
-    meta = wio.load_meta(paths.meta)
-    window = dp.MatchWindow(before_s=args.label_before, after_s=args.label_after)
-    overrides = {f.name: getattr(args, f.name) for f in fields(dp.DetectorParams) if getattr(args, f.name) is not None}
-    params = replace(dp.DetectorParams(), **overrides)
-    out_dir = Path(args.out) / paths.prefix
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    print(f"Session: {paths.prefix}")
-    if meta:
-        print(f"Device: {meta.get('device_model')} (SDK {meta.get('android_sdk')}), started {meta.get('start_wall_time')}")
-
+def report_timing(raw: pd.DataFrame, events: pd.DataFrame) -> None:
     print_section("1. Timing check (raw vs events)")
     rep = wio.alignment_report(raw, events)
     for k, v in rep.items():
@@ -156,29 +78,38 @@ def main() -> None:
     if rep["dropouts"]:
         print("  note: dropouts mean the watch stopped delivering samples for >100 ms "
               "(check battery saver / that the session notification was showing)")
-    print("  labels:", events["label"].value_counts().to_dict() if len(events) else {})
+    print("  labels:", events["label"].value_counts().to_dict())
 
+
+def report_detector(sig: dp.Signals, events: pd.DataFrame, params: dp.DetectorParams,
+                    window: dp.MatchWindow) -> tuple[pd.DataFrame, dict]:
     print_section("2. Detector with current params (INITIAL GUESSES)")
     print(dp.params_as_kotlin(params))
-    det = dp.detect(raw, params)
+    det = dp.detect(sig, params)
     s = dp.score(det, events, window)
     print_score(s)
     if len(det):
         print("  rejected candidates by reason:", det.loc[~det.accepted, "reject_reason"].value_counts().to_dict())
+    return det, s
 
+
+def report_features(sig: dp.Signals, events: pd.DataFrame, params: dp.DetectorParams,
+                    window: dp.MatchWindow) -> tuple[pd.DataFrame, pd.DataFrame]:
     print_section("3. Labeled shots vs background motion")
-    shots = dp.labeled_shot_features(raw, events, params, window)
-    background = dp.background_features(raw, events, params, window)
-    feat_cols = ["peak_gyro", "peak_accel_drive", "min_accel_dip", "dip_to_release_s", "hold_s", "pitch_at_release_deg"]
+    shots = dp.labeled_shot_features(sig, events, params, window)
+    background = dp.background_features(sig, events, params, window)
     print(f"Labeled shots ({len(shots)}): biggest gyro peak in the window before each label")
-    print(describe(shots, feat_cols + ["label_delay_s"]).to_string() if len(shots) else "  (no labels)")
+    print(describe(shots, FEATURE_COLUMNS + ["label_delay_s"]).to_string() if len(shots) else "  (no labels)")
     print(f"\nBackground peaks ({len(background)}): gyro peaks > {dp.BACKGROUND_PEAK_FLOOR} rad/s away from labels")
-    print(describe(background, feat_cols).to_string() if len(background) else "  (none)")
+    print(describe(background, FEATURE_COLUMNS).to_string() if len(background) else "  (none)")
     if len(shots):
-        shots.to_csv(out_dir / "labeled_shot_features.csv", index=False)
         print(f"\nlabel_delay_s = how long after the release you pressed the label button. "
               f"If it's often near {window.before_s:.0f}s, raise --label-before.")
+    return shots, background
 
+
+def report_suggestions(sig: dp.Signals, events: pd.DataFrame, shots: pd.DataFrame, background: pd.DataFrame,
+                       params: dp.DetectorParams, window: dp.MatchWindow) -> dp.DetectorParams:
     print_section("4. Suggested thresholds (from YOUR data; still verify on another session)")
     tuned, notes = dp.suggest_params(shots, background, events, params)
     for n in notes:
@@ -186,30 +117,55 @@ def main() -> None:
     print(dp.params_as_kotlin(tuned))
     if len(events):
         top = max(float(shots["peak_gyro"].max()) if len(shots) else params.release_gyro_min * 2, 1.0)
-        sweep = dp.sweep_release_threshold(raw, events, tuned, window, np.linspace(top * 0.2, top, SWEEP_STEPS))
+        sweep = dp.sweep_release_threshold(sig, events, tuned, window, np.linspace(top * 0.2, top, SWEEP_STEPS))
         print("\nSweep of release_gyro_min (other params = suggested):")
         print(sweep.round(3).to_string(index=False))
         lo, hi, mid = dp.best_plateau(sweep)
         print(f"best F1 {sweep.f1.max():.2f} for release_gyro_min in [{lo:.2f}, {hi:.2f}]; "
               f"the middle ({mid:.2f}) leaves the most margin on both sides")
         tuned = replace(tuned, release_gyro_min=round(mid, 2))
-    s2 = dp.score(dp.detect(raw, tuned), events, window)
     print("\nWith suggested params (release_gyro_min from the sweep):")
     print(dp.params_as_kotlin(tuned))
-    print_score(s2)
-    (out_dir / "suggested_params.txt").write_text(
-        "\n".join(f"{k} = {v}" for k, v in asdict(tuned).items()) + "\n")
+    print_score(dp.score(dp.detect(sig, tuned), events, window))
+    return tuned
 
-    fig1 = plot_overview(raw, events, det, s, params, f"{paths.prefix} (current params)", out_dir / "overview.png")
-    figs = [fig1]
-    if len(shots):
-        figs.append(plot_snippets(raw, shots, out_dir / "shot_snippets.png"))
+
+def main() -> None:
+    args = parse_args()
+    if not args.show:
+        matplotlib.use("Agg")
+    import plots  # after choosing the backend
+
+    paths = wio.find_session(args.session)
+    raw = wio.load_raw(paths.raw)
+    events = wio.load_events(paths.events, raw.attrs["start_ns"])
+    meta = wio.load_meta(paths.meta)
+    window = dp.MatchWindow(before_s=args.label_before, after_s=args.label_after)
+    overrides = {f.name: getattr(args, f.name) for f in fields(dp.DetectorParams) if getattr(args, f.name) is not None}
+    params = replace(dp.DetectorParams(), **overrides)
+    sig = dp.Signals.from_raw(raw, params.smooth_s)
+    out_dir = Path(args.out) / paths.prefix
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    print(f"Session: {paths.prefix}")
+    if meta:
+        print(f"Device: {meta.get('device_model')} (SDK {meta.get('android_sdk')}), started {meta.get('start_wall_time')}")
+
+    report_timing(raw, events)
+    det, s = report_detector(sig, events, params, window)
+    shots, background = report_features(sig, events, params, window)
+    tuned = report_suggestions(sig, events, shots, background, params, window)
+
     det.to_csv(out_dir / "detections.csv", index=False)
+    (out_dir / "suggested_params.txt").write_text("\n".join(f"{k} = {v}" for k, v in asdict(tuned).items()) + "\n")
+    plots.plot_overview(raw, events, det, s, params, f"{paths.prefix} (current params)", out_dir / "overview.png")
+    if len(shots):
+        shots.to_csv(out_dir / "labeled_shot_features.csv", index=False)
+        plots.plot_snippets(raw, shots, out_dir / "shot_snippets.png")
     print(f"\nSaved plots and CSVs to {out_dir}")
 
     if args.show:
-        import matplotlib.pyplot as plt
-        plt.show()
+        plots.plt.show()
 
 
 if __name__ == "__main__":

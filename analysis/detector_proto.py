@@ -58,6 +58,8 @@ class MatchWindow:
 
 # Peaks below this (rad/s) are ignored when collecting "background" motion stats.
 BACKGROUND_PEAK_FLOOR = 1.5
+# Minimum spacing (s) between background peaks, much looser than min_quiet_s.
+BACKGROUND_PEAK_MIN_GAP_S = 0.3
 # Max length (s) we measure a follow-through hold for.
 HOLD_MEASURE_CAP_S = 1.5
 # Suggested hold_min_s = this fraction of the 10th-percentile hold of your shots,
@@ -66,57 +68,77 @@ HOLD_SUGGEST_FACTOR = 0.5
 HOLD_SUGGEST_MAX_S = 0.4
 
 
-def smoothed(df: pd.DataFrame, column: str, p: DetectorParams) -> np.ndarray:
-    n = max(1, int(round(p.smooth_s * sample_rate(df))))
-    return df[column].rolling(n, center=True, min_periods=1).mean().to_numpy()
+@dataclass(frozen=True)
+class Signals:
+    """Smoothed arrays the detector works on, computed once per session."""
+
+    t: np.ndarray
+    gyro: np.ndarray
+    acc: np.ndarray
+    pitch: np.ndarray
+    rate_hz: float
+
+    @classmethod
+    def from_raw(cls, df: pd.DataFrame, smooth_s: float) -> "Signals":
+        rate = sample_rate(df)
+        n = max(1, int(round(smooth_s * rate)))
+
+        def smooth(col: str) -> np.ndarray:
+            return df[col].rolling(n, center=True, min_periods=1).mean().to_numpy()
+
+        return cls(df["t"].to_numpy(), smooth("gyro_mag"), smooth("acc_mag"), df["pitch_deg"].to_numpy(), rate)
+
+    def window(self, start_s: float, end_s: float) -> slice:
+        """Sample indices with start_s <= t <= end_s (t is sorted, so binary search)."""
+        return slice(np.searchsorted(self.t, start_s, "left"), np.searchsorted(self.t, end_s, "right"))
+
+    def peaks(self, height: float, min_gap_s: float) -> np.ndarray:
+        peaks, _ = find_peaks(self.gyro, height=height, distance=max(1, int(min_gap_s * self.rate_hz)))
+        return peaks
 
 
-def features_at(df: pd.DataFrame, i: int, gyro: np.ndarray, acc: np.ndarray, p: DetectorParams) -> dict:
+def features_at(sig: Signals, i: int, p: DetectorParams) -> dict:
     """Shot features around a candidate release at sample index i."""
-    t = df["t"].to_numpy()
-    t0 = t[i]
-    drive = (t >= t0 - p.drive_window_s) & (t <= t0)
-    dip = (t >= t0 - p.dip_window_s) & (t <= t0)
-    drive_idx = np.flatnonzero(drive)
-    dip_idx = np.flatnonzero(dip)
-    peak_acc_i = drive_idx[np.argmax(acc[drive_idx])]
-    dip_i = dip_idx[np.argmin(acc[dip_idx])]
-
-    # Follow-through: first moment after release the wrist is quiet, then how long it stays quiet.
-    after = np.flatnonzero((t > t0) & (t <= t0 + p.hold_search_s))
-    quiet_start = next((j for j in after if gyro[j] < p.hold_gyro_max), None)
-    hold_s = 0.0
-    if quiet_start is not None:
-        j = quiet_start
-        while j + 1 < len(t) and gyro[j + 1] < p.hold_gyro_max and t[j + 1] - t[quiet_start] < HOLD_MEASURE_CAP_S:
-            j += 1
-        hold_s = float(t[j] - t[quiet_start])
-
+    t0 = sig.t[i]
+    drive = sig.window(t0 - p.drive_window_s, t0)
+    dip = sig.window(t0 - p.dip_window_s, t0)
+    peak_acc_i = drive.start + int(np.argmax(sig.acc[drive]))
+    dip_i = dip.start + int(np.argmin(sig.acc[dip]))
     return {
         "t_release": float(t0),
-        "peak_gyro": float(gyro[i]),
-        "peak_accel_drive": float(acc[peak_acc_i]),
-        "min_accel_dip": float(acc[dip_i]),
-        "dip_to_release_s": float(t0 - t[dip_i]),
-        "hold_s": hold_s,
-        "pitch_at_release_deg": float(df["pitch_deg"].iloc[i]),
+        "peak_gyro": float(sig.gyro[i]),
+        "peak_accel_drive": float(sig.acc[peak_acc_i]),
+        "min_accel_dip": float(sig.acc[dip_i]),
+        "dip_to_release_s": float(t0 - sig.t[dip_i]),
+        "hold_s": hold_duration(sig, i, p),
+        "pitch_at_release_deg": float(sig.pitch[i]),
     }
 
 
-def candidate_peaks(df: pd.DataFrame, p: DetectorParams, height: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    gyro = smoothed(df, "gyro_mag", p)
-    acc = smoothed(df, "acc_mag", p)
-    distance = max(1, int(p.min_quiet_s * sample_rate(df)))
-    peaks, _ = find_peaks(gyro, height=height, distance=distance)
-    return peaks, gyro, acc
+def hold_duration(sig: Signals, i: int, p: DetectorParams) -> float:
+    """Follow-through: first quiet moment after release, then how long the wrist stays quiet."""
+    t0 = sig.t[i]
+    search = sig.window(t0, t0 + p.hold_search_s)
+    quiet = np.flatnonzero(sig.gyro[search] < p.hold_gyro_max)
+    quiet = quiet[sig.t[search][quiet] > t0]
+    if len(quiet) == 0:
+        return 0.0
+    start = search.start + int(quiet[0])
+    stop = int(np.searchsorted(sig.t, sig.t[start] + HOLD_MEASURE_CAP_S, "left"))
+    loud = np.flatnonzero(sig.gyro[start:stop] >= p.hold_gyro_max)
+    end = start + int(loud[0]) - 1 if len(loud) else stop - 1
+    return float(sig.t[end] - sig.t[start])
 
 
-def detect(df: pd.DataFrame, p: DetectorParams) -> pd.DataFrame:
+DETECTION_COLUMNS = ["t_release", "peak_gyro", "peak_accel_drive", "min_accel_dip", "dip_to_release_s",
+                     "hold_s", "pitch_at_release_deg", "accepted", "reject_reason"]
+
+
+def detect(sig: Signals, p: DetectorParams) -> pd.DataFrame:
     """Runs the detector. Returns every candidate with features and why it was rejected."""
-    peaks, gyro, acc = candidate_peaks(df, p, p.release_gyro_min)
     rows = []
-    for i in peaks:
-        f = features_at(df, i, gyro, acc, p)
+    for i in sig.peaks(p.release_gyro_min, p.min_quiet_s):
+        f = features_at(sig, i, p)
         reasons = []
         if f["peak_accel_drive"] < p.drive_accel_min:
             reasons.append("no_drive")
@@ -127,9 +149,7 @@ def detect(df: pd.DataFrame, p: DetectorParams) -> pd.DataFrame:
         f["accepted"] = not reasons
         f["reject_reason"] = "+".join(reasons)
         rows.append(f)
-    cols = ["t_release", "peak_gyro", "peak_accel_drive", "min_accel_dip", "dip_to_release_s",
-            "hold_s", "pitch_at_release_deg", "accepted", "reject_reason"]
-    return pd.DataFrame(rows, columns=cols)
+    return pd.DataFrame(rows, columns=DETECTION_COLUMNS)
 
 
 def match(detected_t: np.ndarray, label_t: np.ndarray, w: MatchWindow) -> tuple[list[tuple[int, int]], list[int], list[int]]:
@@ -156,8 +176,7 @@ def match(detected_t: np.ndarray, label_t: np.ndarray, w: MatchWindow) -> tuple[
 
 
 def score(detections: pd.DataFrame, events: pd.DataFrame, w: MatchWindow) -> dict:
-    acc = detections[detections["accepted"]] if len(detections) else detections
-    d_t = acc["t_release"].to_numpy() if len(acc) else np.array([])
+    d_t = detections.loc[detections["accepted"], "t_release"].to_numpy()
     pairs, fp, fn = match(d_t, events["t"].to_numpy(), w)
     tp = len(pairs)
     precision = tp / len(d_t) if len(d_t) else 0.0
@@ -168,18 +187,19 @@ def score(detections: pd.DataFrame, events: pd.DataFrame, w: MatchWindow) -> dic
             "pairs": pairs, "false_pos_idx": fp, "missed_idx": fn}
 
 
-def labeled_shot_features(df: pd.DataFrame, events: pd.DataFrame, p: DetectorParams, w: MatchWindow) -> pd.DataFrame:
+def near_any_label(t: float, events: pd.DataFrame, w: MatchWindow) -> bool:
+    return bool(((events["t"] - w.before_s <= t) & (t <= events["t"] + w.after_s)).any())
+
+
+def labeled_shot_features(sig: Signals, events: pd.DataFrame, p: DetectorParams, w: MatchWindow) -> pd.DataFrame:
     """For each label, assume the biggest gyro peak in its window is the release."""
-    gyro = smoothed(df, "gyro_mag", p)
-    acc = smoothed(df, "acc_mag", p)
-    t = df["t"].to_numpy()
     rows = []
     for _, e in events.iterrows():
-        win = np.flatnonzero((t >= e["t"] - w.before_s) & (t <= e["t"] + w.after_s))
-        if len(win) == 0:
+        win = sig.window(e["t"] - w.before_s, e["t"] + w.after_s)
+        if win.stop <= win.start:
             continue
-        i = win[np.argmax(gyro[win])]
-        f = features_at(df, i, gyro, acc, p)
+        i = win.start + int(np.argmax(sig.gyro[win]))
+        f = features_at(sig, i, p)
         f["label"] = e["label"]
         f["label_t"] = float(e["t"])
         f["label_delay_s"] = float(e["t"] - f["t_release"])
@@ -187,17 +207,10 @@ def labeled_shot_features(df: pd.DataFrame, events: pd.DataFrame, p: DetectorPar
     return pd.DataFrame(rows)
 
 
-def background_features(df: pd.DataFrame, events: pd.DataFrame, p: DetectorParams, w: MatchWindow) -> pd.DataFrame:
+def background_features(sig: Signals, events: pd.DataFrame, p: DetectorParams, w: MatchWindow) -> pd.DataFrame:
     """Features of gyro peaks that are NOT near any label (dribbles, walking, fidgeting)."""
-    loose = replace(p, min_quiet_s=0.3)
-    peaks, gyro, acc = candidate_peaks(df, loose, BACKGROUND_PEAK_FLOOR)
-    t = df["t"].to_numpy()
-    rows = []
-    for i in peaks:
-        near = ((events["t"] - w.before_s <= t[i]) & (t[i] <= events["t"] + w.after_s)).any()
-        if not near:
-            rows.append(features_at(df, i, gyro, acc, p))
-    return pd.DataFrame(rows)
+    peaks = sig.peaks(BACKGROUND_PEAK_FLOOR, BACKGROUND_PEAK_MIN_GAP_S)
+    return pd.DataFrame([features_at(sig, i, p) for i in peaks if not near_any_label(sig.t[i], events, w)])
 
 
 def _between(shot_low: float, background_high: float, fallback_factor: float) -> tuple[float, bool]:
@@ -250,11 +263,11 @@ def suggest_params(shots: pd.DataFrame, background: pd.DataFrame, events: pd.Dat
     return tuned, notes
 
 
-def sweep_release_threshold(df: pd.DataFrame, events: pd.DataFrame, p: DetectorParams, w: MatchWindow,
+def sweep_release_threshold(sig: Signals, events: pd.DataFrame, p: DetectorParams, w: MatchWindow,
                             values: np.ndarray) -> pd.DataFrame:
     rows = []
     for v in values:
-        s = score(detect(df, replace(p, release_gyro_min=float(v))), events, w)
+        s = score(detect(sig, replace(p, release_gyro_min=float(v))), events, w)
         rows.append({"release_gyro_min": float(v), **{k: s[k] for k in ("detected", "true_pos", "false_pos",
                                                                          "missed", "precision", "recall", "f1")}})
     return pd.DataFrame(rows)

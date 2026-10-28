@@ -60,6 +60,15 @@ def find_session(path_like: str) -> SessionPaths:
     return SessionPaths(name, raw, events, meta if meta.exists() else None)
 
 
+def session_origin_ns(df: pd.DataFrame) -> pd.Series:
+    """Session start on the sensor clock, implied by each row (t_ns - t_rel_s).
+
+    Both files write t_rel_s relative to the same start, so this is constant
+    within a file and identical across the raw and events files.
+    """
+    return df["t_ns"] - (df["t_rel_s"] * 1e9).round()
+
+
 def load_raw(path: Path) -> pd.DataFrame:
     """Loads the raw CSV and adds handy derived columns.
 
@@ -74,7 +83,7 @@ def load_raw(path: Path) -> pd.DataFrame:
                    which way round the watch is worn.
     """
     df = pd.read_csv(path)
-    start_ns = int(df["t_ns"].iloc[0] - round(df["t_rel_s"].iloc[0] * 1e9))
+    start_ns = int(session_origin_ns(df).iloc[0])
     df["t"] = (df["t_ns"] - start_ns) / 1e9
     df["acc_mag"] = np.sqrt(df.ax**2 + df.ay**2 + df.az**2)
     df["gyro_mag"] = np.sqrt(df.gx**2 + df.gy**2 + df.gz**2)
@@ -90,7 +99,7 @@ def load_events(path: Path, start_ns: int | None = None) -> pd.DataFrame:
     """Loads the events CSV. With start_ns (from load_raw) times use the raw file's origin."""
     ev = pd.read_csv(path)
     if start_ns is None:
-        start_ns = int(ev["t_ns"].iloc[0] - round(ev["t_rel_s"].iloc[0] * 1e9)) if len(ev) else 0
+        start_ns = int(session_origin_ns(ev).iloc[0]) if len(ev) else 0
     ev["t"] = (ev["t_ns"] - start_ns) / 1e9
     return ev
 
@@ -104,7 +113,6 @@ def load_meta(path: Path | None) -> dict:
 def alignment_report(raw: pd.DataFrame, events: pd.DataFrame) -> dict:
     """Checks the acceptance criterion: raw and event timestamps line up."""
     dt = np.diff(raw["t_ns"].to_numpy()) / 1e9
-    raw_origin = raw["t_ns"] - raw["t_rel_s"] * 1e9
     report = {
         "samples": len(raw),
         "duration_s": float(raw["t"].iloc[-1] - raw["t"].iloc[0]) if len(raw) else 0.0,
@@ -120,8 +128,8 @@ def alignment_report(raw: pd.DataFrame, events: pd.DataFrame) -> dict:
     if len(events):
         inside = events["t"].between(raw["t"].iloc[0], raw["t"].iloc[-1])
         report["events_outside_raw"] = int((~inside).sum())
-        ev_origin = events["t_ns"] - events["t_rel_s"] * 1e9
-        report["clock_mismatch_ms"] = float(abs(ev_origin.median() - raw_origin.median()) / 1e6)
+        mismatch_ns = session_origin_ns(events).median() - session_origin_ns(raw).median()
+        report["clock_mismatch_ms"] = float(abs(mismatch_ns) / 1e6)
     report["ok"] = (
         report["non_monotonic"] == 0
         and report["events_outside_raw"] == 0

@@ -57,19 +57,23 @@ WristShot/
 │       ├── MainActivity.kt          entry point, stem-button handling, permission prompt
 │       ├── config/AppConfig.kt      UI / Android settings (one place)
 │       ├── sensors/                 SENSOR LAYER: SensorManager → aligned samples
-│       ├── recording/               STORAGE + SERVICE: foreground service, CSV writer thread
-│       └── ui/                      UI LAYER: Home screen, Make/Miss screen
+│       ├── recording/               STORAGE + SERVICE: foreground service, notification,
+│       │                            recorder thread, SessionRepository (UI ↔ service state)
+│       └── ui/                      UI LAYER: Home screen, Make/Miss screen, Theme (colors)
 ├── core/                     Pure Kotlin (no Android). Unit-testable on any computer.
 │   └── src/main/kotlin/dev/malzbro/wristshot/core/
 │       ├── config/RecorderConfig.kt  every recorder number (sample rate, buffers, …)
 │       ├── sensor/StreamAligner.kt   merges accel/gyro/gravity/rotation by timestamp
 │       ├── csv/ session/ model/      file formats, metadata, counters
+│       ├── util/TimeFormat.kt        "01:15" style timer text
 │       └── (Phase 3: detector/ goes here, with its own DetectorConfig)
 ├── analysis/                 Python tools (Phase 2)
 │   ├── analyze_session.py           main script: timing check, plots, detector, thresholds
 │   ├── detector_proto.py            prototype detector + matching + threshold suggestions
 │   ├── wristshot_io.py              loads the CSVs, adds magnitudes / pitch
-│   └── make_synthetic_session.py    FAKE data, only to check the scripts run
+│   ├── plots.py                     overview and shot-snippet figures
+│   ├── make_synthetic_session.py    FAKE data, only to check the scripts run
+│   └── tests/                       pytest tests (run: python -m pytest)
 ├── scripts/pull_sessions.sh  copies sessions from the watch to ./data/sessions
 └── gradle/libs.versions.toml all library versions in one place
 ```
@@ -383,6 +387,11 @@ python make_synthetic_session.py --out ../data/synthetic
 ```
 ```bash
 python analyze_session.py ../data/synthetic
+```
+
+Run the analysis tests (from the `analysis/` folder):
+```bash
+python -m pytest
 ```
 
 ---

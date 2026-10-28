@@ -26,15 +26,11 @@ def bump(t: np.ndarray, center: float, width: float) -> np.ndarray:
     return np.exp(-0.5 * ((t - center) / width) ** 2)
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--out", default="../data/synthetic")
-    ap.add_argument("--minutes", type=float, default=10)
-    ap.add_argument("--seed", type=int, default=7)
-    args = ap.parse_args()
-    rng = np.random.default_rng(args.seed)
+def generate(minutes: float = 10, seed: int = 7) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Returns (raw, events) DataFrames in the watch's CSV column format."""
+    rng = np.random.default_rng(seed)
 
-    n = int(args.minutes * 60 * RATE_HZ)
+    n = int(minutes * 60 * RATE_HZ)
     t = np.arange(n) / RATE_HZ
     acc = np.zeros((n, 3)) + rng.normal(0, 0.15, (n, 3))
     gyro = rng.normal(0, 0.05, (n, 3))
@@ -54,7 +50,8 @@ def main() -> None:
 
     # Shots: dip -> drive -> wrist flick -> quiet hold. Labels 1.5-4 s later.
     events = []
-    for c in np.arange(8, t[-1] - 6, 22) + rng.uniform(-3, 3, len(np.arange(8, t[-1] - 6, 22))):
+    centers = np.arange(8, t[-1] - 6, 22)
+    for c in centers + rng.uniform(-3, 3, len(centers)):
         acc[:, 2] -= 3.5 * bump(t, c - 0.55, 0.12)          # dip
         acc[:, 2] += rng.uniform(8, 12) * bump(t, c - 0.15, 0.1)  # drive
         gyro[:, 2] += rng.uniform(9, 14) * bump(t, c, 0.04)  # release flick
@@ -78,23 +75,37 @@ def main() -> None:
         "qx": 0.0, "qy": 0.0, "qz": 0.0, "qw": 1.0,
     }).round(4)
 
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    prefix = f"session_{stamp}"
-    out = Path(args.out)
-    out.mkdir(parents=True, exist_ok=True)
-    raw.to_csv(out / f"{prefix}_raw.csv", index=False)
     ev_ns = [start_ns + int(e * 1e9) for e, _ in events]
-    pd.DataFrame({
+    events_df = pd.DataFrame({
         "t_ns": ev_ns,
         "t_rel_s": [round((x - start_ns) / 1e9, 4) for x in ev_ns],
         "wall_time": ["synthetic"] * len(events),
         "label": [lab for _, lab in events],
         "source": ["button"] * len(events),
-    }).to_csv(out / f"{prefix}_events.csv", index=False)
+    })
+    return raw, events_df
+
+
+def write_session(raw: pd.DataFrame, events: pd.DataFrame, out: Path, prefix: str) -> None:
+    out.mkdir(parents=True, exist_ok=True)
+    raw.to_csv(out / f"{prefix}_raw.csv", index=False)
+    events.to_csv(out / f"{prefix}_events.csv", index=False)
     (out / f"{prefix}_meta.json").write_text(json.dumps({
-        "session_id": prefix, "device_model": "SYNTHETIC", "android_sdk": 0, "start_wall_time": stamp,
+        "session_id": prefix, "device_model": "SYNTHETIC", "android_sdk": 0, "start_wall_time": prefix,
     }, indent=2))
-    print(f"Wrote {len(raw)} samples and {len(events)} labels to {out}/{prefix}_*")
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--out", default="../data/synthetic")
+    ap.add_argument("--minutes", type=float, default=10)
+    ap.add_argument("--seed", type=int, default=7)
+    args = ap.parse_args()
+
+    raw, events = generate(args.minutes, args.seed)
+    prefix = "session_" + datetime.now().strftime("%Y%m%d_%H%M%S")
+    write_session(raw, events, Path(args.out), prefix)
+    print(f"Wrote {len(raw)} samples and {len(events)} labels to {args.out}/{prefix}_*")
 
 
 if __name__ == "__main__":
