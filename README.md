@@ -79,6 +79,7 @@ WristShot/
 ├── recordings/               real sessions kept as test data (the detector tests run on these)
 ├── docs/reading_the_plots.md how to read every graph, with your data
 ├── docs/excel_guide.md       make the same graphs yourself in Excel
+├── excel/                    ready-to-open Excel files (all shots overlaid)
 ├── scripts/pull_sessions.sh  copies sessions from the watch to ./data/sessions
 └── gradle/libs.versions.toml all library versions in one place
 ```

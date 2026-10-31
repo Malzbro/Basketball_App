@@ -116,3 +116,21 @@ def test_detector_on_real_recording(prefix):
     p = dp.DetectorParams()
     s = dp.score(dp.detect(dp.Signals.from_raw(raw, p), p), events, dp.MatchWindow())
     assert s["f1"] >= MIN_F1_ON_RECORDING
+
+
+def test_excel_workbook_has_one_line_per_shot(tmp_path):
+    from openpyxl import load_workbook
+    import make_excel_workbook as mx
+
+    raw, events = synth.generate(minutes=1, seed=3)
+    synth.write_session(raw, events, tmp_path, "session_x")
+    out = tmp_path / "overlay.xlsx"
+    mx.build(mx.session_paths([str(tmp_path)]), out)
+
+    wb = load_workbook(out)
+    assert wb.sheetnames == ["Start here", "Charts", "Shot lines", "Shots"]
+    n_shots = wb["Shots"].max_row - 1
+    assert n_shots == len(events)
+    blank_rows = sum(1 for r in wb["Shot lines"].iter_rows(min_row=2, values_only=True) if r[0] is None)
+    assert blank_rows == n_shots  # one blank row after each shot = one separate line per shot
+    assert len(wb["Charts"]._charts) == 3

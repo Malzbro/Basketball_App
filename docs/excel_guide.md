@@ -185,6 +185,13 @@ or `C:C` (spike; bins of 5, from 0 to 120), and change the `0.1` step to match.
 
 ## Part 5: All your shots on top of each other (like `shot_snippets.png`)
 
+> **Easiest: open the ready-made file.** `excel/shots_overlay_session_20261030.xlsx` already
+> has all 142 shots overlaid (blue = make, orange = miss), built by
+> `analysis/make_excel_workbook.py`. To combine more sessions (e.g. 500+ shots), run
+> `python make_excel_workbook.py ../recordings --out ../excel/all_shots.xlsx`, or upload the
+> sessions and ask for it. The steps below build a 40-shot version by hand, if you want to
+> learn how it works.
+
 Each line in this chart is one shot: the 3 seconds around its release (1.5 s before to
 1.5 s after), shifted so every release sits at 0. Instead of copying 40 blocks of rows
 by hand, formulas look them up for you.
