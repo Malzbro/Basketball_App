@@ -32,6 +32,12 @@ import detector_proto as dp
 import wristshot_io as wio
 
 SWEEP_STEPS = 25
+DEFAULT_ZOOM_S = 180.0
+
+
+def typical_shot(shots: pd.DataFrame) -> pd.Series:
+    """The labeled shot whose hold time is closest to the median: a representative example."""
+    return shots.loc[(shots["hold_s"] - shots["hold_s"].median()).abs().idxmin()]
 
 
 def parse_args() -> argparse.Namespace:
@@ -43,6 +49,8 @@ def parse_args() -> argparse.Namespace:
                     help="a label may come up to this many seconds after the release")
     ap.add_argument("--label-after", type=float, default=dp.MatchWindow.after_s,
                     help="a label may come up to this many seconds before the release")
+    ap.add_argument("--zoom", type=float, nargs=2, metavar=("START_S", "END_S"), default=None,
+                    help="also save overview_zoom.png for this time range (default: the first 3 minutes)")
     for f in fields(dp.DetectorParams):
         flag = "--" + f.name.replace("_", "-")
         ap.add_argument(flag, type=float, default=None, help=f"override DetectorParams.{f.name}")
@@ -150,15 +158,20 @@ def main() -> None:
 
     report_timing(raw, events)
     det, s = report_detector(sig, events, params, window)
-    shots, _ = report_features(sig, events, params, window)
+    shots, background = report_features(sig, events, params, window)
     tuned = report_suggestions(sig, events, shots, params, window)
 
     det.to_csv(out_dir / "detections.csv", index=False)
     (out_dir / "suggested_params.txt").write_text("\n".join(f"{k} = {v}" for k, v in asdict(tuned).items()) + "\n")
-    plots.plot_overview(raw, events, det, s, params, f"{paths.prefix} (current params)", out_dir / "overview.png")
+    plots.plot_overview(raw, events, det, s, params, f"{paths.prefix}: whole session", out_dir / "overview.png")
+    zoom = tuple(args.zoom) if args.zoom else (raw.t.iloc[0], raw.t.iloc[0] + DEFAULT_ZOOM_S)
+    plots.plot_overview(raw, events, det, s, params, f"{paths.prefix}: {zoom[0]:.0f}-{zoom[1]:.0f} s",
+                        out_dir / "overview_zoom.png", xlim=zoom)
     if len(shots):
         shots.to_csv(out_dir / "labeled_shot_features.csv", index=False)
         plots.plot_snippets(raw, shots, out_dir / "shot_snippets.png")
+        plots.plot_shot_anatomy(raw, typical_shot(shots), params, out_dir / "shot_anatomy.png")
+        plots.plot_feature_histograms(shots, background, params, out_dir / "feature_histograms.png")
     print(f"\nSaved plots and CSVs to {out_dir}")
 
     if args.show:

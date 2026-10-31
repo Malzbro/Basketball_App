@@ -5,15 +5,16 @@ It runs entirely on the watch. Its motion sensors will detect your shots, a wris
 label each one make or miss, and each shot's motion will be scored against your own baseline.
 It exports CSV/JSON you can analyze yourself or hand to Claude.
 
-> **Current status: Phases 1 and 2 are done.** The watch records raw sensor data plus your
-> manual Make/Miss labels, and a Python toolkit turns those recordings into plots, a prototype
-> detector and suggested thresholds. Automatic detection (Phase 3) is waiting for your real data.
+> **Current status: Phases 1–3 are done.** The watch records raw sensor data and your Make/Miss
+> labels, and **detects your shots live** (a short buzz per shot) with a detector tuned on your
+> first real session: 139 of 144 shots found. The Python toolkit plots sessions and re-checks
+> the detector. **New to the graphs? Start with [docs/reading_the_plots.md](docs/reading_the_plots.md).**
 
 | Phase | What | Status |
 |---|---|---|
 | 1 | Raw recorder: sensors → CSV, manual Make/Miss labels, screen-off recording | ✅ built |
 | 2 | Python analysis: plots, prototype detector, precision/recall, threshold suggestions | ✅ built |
-| 3 | On-device shot detection state machine, haptics, debug screen, CSV-fixture tests | 🔜 detector designed from your data (F1 0.90), next: port to the watch |
+| 3 | On-device shot detection state machine, haptics, debug screen, CSV-fixture tests | ✅ built (F1 0.90 on your session) |
 | 4 | Make/miss by wrist twist (pronation / supination), calibration, corrections | ⏳ |
 | 5 | Form score (0–100) vs your personal baseline, session consistency | ⏳ |
 | 6 | Shot location: drill mode and free mode | ⏳ |
@@ -59,14 +60,14 @@ WristShot/
 │       ├── sensors/                 SENSOR LAYER: SensorManager → aligned samples
 │       ├── recording/               STORAGE + SERVICE: foreground service, notification,
 │       │                            recorder thread, SessionRepository (UI ↔ service state)
-│       └── ui/                      UI LAYER: Home screen, Make/Miss screen, Theme (colors)
+│       └── ui/                      UI LAYER: Home, Make/Miss and Detector debug screens, Theme
 ├── core/                     Pure Kotlin (no Android). Unit-testable on any computer.
 │   └── src/main/kotlin/dev/malzbro/wristshot/core/
 │       ├── config/RecorderConfig.kt  every recorder number (sample rate, buffers, …)
 │       ├── sensor/StreamAligner.kt   merges accel/gyro/gravity/rotation by timestamp
 │       ├── csv/ session/ model/      file formats, metadata, counters
 │       ├── util/TimeFormat.kt        "01:15" style timer text
-│       └── (Phase 3: detector/ goes here, with its own DetectorConfig)
+│       ├── detector/                 ShotDetector (live state machine) + DetectorConfig (all thresholds)
 ├── analysis/                 Python tools (Phase 2)
 │   ├── analyze_session.py           main script: timing check, plots, detector, thresholds
 │   ├── detector_proto.py            prototype detector + matching + threshold suggestions
@@ -74,6 +75,8 @@ WristShot/
 │   ├── plots.py                     overview and shot-snippet figures
 │   ├── make_synthetic_session.py    FAKE data, only to check the scripts run
 │   └── tests/                       pytest tests (run: python -m pytest)
+├── recordings/               real sessions kept as test data (the detector tests run on these)
+├── docs/reading_the_plots.md how to read every graph, with your data
 ├── scripts/pull_sessions.sh  copies sessions from the watch to ./data/sessions
 └── gradle/libs.versions.toml all library versions in one place
 ```
@@ -226,6 +229,15 @@ Details:
   screen records a `Shot?` instead of leaving. Use **Done** or swipe right to leave.
 * The **Last session** box on the home screen shows duration, shots, average sample rate and
   the number of *gaps* (moments the watch stopped delivering data for >100 ms). It should be 0.
+* **Automatic shot detection (Phase 3).** While recording, the watch buzzes once (short) about
+  1–2 s after each shot it detects, when your arm comes down from the follow-through. The
+  home screen shows **Detected N** next to your labeled count. Keep labeling Make/Miss as
+  before: the labels are how we check the detector, and the twist gesture (Phase 4) replaces
+  the buttons later.
+* **Detector debug screen.** Home → **Detector debug** shows, live: **ARM UP** while your arm
+  is above the −45° line, the current arm angle, detected vs labeled counts, and the last arm
+  raise with its numbers (flick, spike, hold) next to each threshold, plus why it didn't count
+  if it didn't (`short_hold`, `weak_flick`, `no_accel_spike`, `too_soon`).
 * **Uninstalling the app deletes all recordings.** Pull them first ([section 6](#6-getting-the-files-off-the-watch)).
   Reinstalling or updating from Android Studio keeps them.
 
@@ -282,7 +294,7 @@ the analysis reads it directly.
 
 ## 7. File formats
 
-Every session writes three files with the same prefix `session_YYYYMMDD_HHMMSS`.
+Every session writes four files with the same prefix `session_YYYYMMDD_HHMMSS`.
 
 ### `_raw.csv`: one row per accelerometer sample (~100 per second)
 
@@ -314,11 +326,26 @@ Phase 4 calibration step will handle that.
 | `label` | `make`, `miss` or `shot` (= *Shot?*, outcome unknown) |
 | `source` | `button` (screen) or `hardware_key` |
 
+### `_detections.csv`: one row per arm raise the live detector evaluated
+
+| column | meaning |
+|---|---|
+| `t_ns`, `t_rel_s` | release time (the flick), same clock as the other files |
+| `is_shot` | `true` if it counted as a shot |
+| `reject_reason` | empty for a shot, else e.g. `short_hold+weak_flick` |
+| `peak_gyro` | release flick, rad/s |
+| `release_accel` | peak acceleration within 0.3 s after the flick, m/s² |
+| `hold_s` | how long the arm stayed raised (follow-through), s |
+| `min_pitch_deg` | highest arm position reached (most negative angle), ° |
+| `peak_accel_drive`, `min_accel_dip`, `dip_to_release_s` | motion before the release (for form scoring later) |
+
+The same columns as the Python analysis, so you can compare them directly.
+
 ### `_meta.json`
 
 Device model, Android version, start time, sensor names/ranges, sample count, **mean sample
-rate**, **max gap** and **dropouts** (gaps >100 ms), plus make/miss totals. It's written when
-the session stops normally.
+rate**, **max gap** and **dropouts** (gaps >100 ms), make/miss totals, **`detected_shots`**,
+and the **`detector`** thresholds that were used. It's written when the session stops normally.
 
 ---
 
@@ -365,10 +392,12 @@ It prints four sections:
    of the release threshold, and the score with the suggestions. They print as Kotlin
    `const val` lines ready for Phase 3.
 
-Outputs are saved to `analysis/output/<session>/`:
-* `overview.png`: |accel|, |gyro| and forearm pitch over the whole session, with your labels
-  and the detections drawn on top.
-* `shot_snippets.png`: all labeled shots overlaid, aligned at the release. Tight bundles of
+Outputs are saved to `analysis/output/<session>/`. **How to read each one, with your own
+data: [docs/reading_the_plots.md](docs/reading_the_plots.md).**
+* `shot_anatomy.png`: one typical shot, annotated with every number the detector checks.
+* `feature_histograms.png`: your shots vs other arm raises for each check, with the thresholds.
+* `overview_zoom.png`: the first 3 minutes (or `--zoom START END`); `overview.png`: whole session.
+* `shot_snippets.png`: all labeled shots overlaid, lined up at the release. Tight bundles of
   lines mean consistent motion.
 * `labeled_shot_features.csv`, `detections.csv`, `suggested_params.txt`.
 
@@ -425,7 +454,20 @@ python -m pytest
 
 ## 9. What to test now and what data to send back
 
-### Phase 1 check on the watch
+### Phase 3 check on the watch (do this next)
+
+- [ ] Rebuild and install (Run ▶). On the first session after updating, nothing new is asked.
+- [ ] Open **Detector debug** while recording. Raise your arm in a shooting follow-through:
+      it shows **ARM UP** and the angle goes below −45°. Arm down: **idle**.
+- [ ] Shoot normally. About 1–2 s after each shot (when your arm comes down) the watch gives
+      one short buzz, and **Detected** goes up. Keep labeling Make/Miss as before.
+- [ ] Dribble, pass and walk for a few minutes without shooting: the watch should (almost)
+      never buzz. If it does, check the debug screen's last raise to see why it counted.
+- [ ] Record a normal session (20+ minutes, labeling every shot), pull all four files and
+      run `analyze_session.py` on it. Compare `detected_shots` in `meta.json` with your
+      label count.
+
+### Phase 1 check on the watch (done)
 
 - [ ] App installs and opens. Start → Make/Miss screen appears, the notification shows, and an
       ongoing-activity icon with a running timer appears on the watch face.
@@ -437,7 +479,9 @@ python -m pytest
       `-> timestamps line up`. **This is the Phase 1 acceptance test.**
 - [ ] Optional: a **1-hour** session to check battery drain (note the battery % before and after).
 
-### Recordings to bring back for Phase 3 tuning
+### Recordings to bring back
+
+The first shooting session is in `recordings/`. What helps most now:
 
 Wear the watch the way you always will (right wrist, same strap hole, same orientation) and
 write that down. Then record:
@@ -446,12 +490,13 @@ write that down. Then record:
 |---|---|---|
 | **A: Shooting** (15–20 min) | 40–60 normal shots from mixed spots and distances. Rebound, dribble, walk back between shots as you normally would. **Label every shot** (Make/Miss) right after you see the result. | Real shot motion vs. everything around it |
 | **B: No shooting** (5–10 min) | Dribbling drills, passing, catching, walking, jogging, retying shoes. **No labels.** | Measures false positives |
-| **C: Shooting again** (10 min, another day if possible) | Same as A | Checks the suggested thresholds on data they weren't tuned on |
+| **C: Shooting again** (10 min, another day if possible) | Same as A | Checks the thresholds on data they weren't tuned on |
 
 Send back, for each session:
-1. The three files (`_raw.csv`, `_events.csv`, `_meta.json`). Zip them if they're big.
+1. All four files (`_raw.csv`, `_events.csv`, `_detections.csv`, `_meta.json`). Zip the raw
+   CSV if it's over 25 MB (the GitHub website limit); the analysis reads `_raw.zip` directly.
 2. The full printout of `python analyze_session.py <session>`.
-3. `overview.png` and `shot_snippets.png`.
+3. `shot_anatomy.png`, `feature_histograms.png` and `shot_snippets.png`.
 4. Notes: wrist and orientation, any shots you forgot to label or mislabeled, and anything odd
    (e.g. "minutes 4–5 I was just shooting free throws").
 
