@@ -132,5 +132,7 @@ def test_excel_workbook_has_one_line_per_shot(tmp_path):
     n_shots = wb["Shots"].max_row - 1
     assert n_shots == len(events)
     blank_rows = sum(1 for r in wb["Shot lines"].iter_rows(min_row=2, values_only=True) if r[0] is None)
-    assert blank_rows == n_shots  # one blank row after each shot = one separate line per shot
+    # A blank row between consecutive shots breaks the line, so each shot is its own line.
+    # (Excel files don't store the trailing blank row after the last shot.)
+    assert blank_rows == n_shots - 1
     assert len(wb["Charts"]._charts) == 3
