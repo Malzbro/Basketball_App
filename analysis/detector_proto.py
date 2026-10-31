@@ -103,7 +103,8 @@ class Signals:
 
         def smooth(col: str, seconds: float) -> np.ndarray:
             n = max(1, int(round(seconds * rate)))
-            return df[col].rolling(n, center=True, min_periods=1).mean().to_numpy()
+            # Trailing average (past samples only), exactly what the watch can compute live.
+            return df[col].rolling(n, min_periods=1).mean().to_numpy()
 
         return cls(
             t=df["t"].to_numpy(),

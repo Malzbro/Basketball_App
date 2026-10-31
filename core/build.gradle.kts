@@ -23,4 +23,6 @@ dependencies {
 
 tasks.test {
     useJUnitPlatform()
+    // Real recorded sessions used as test fixtures (see ShotDetectorRecordingTest).
+    systemProperty("wristshot.recordings", rootProject.file("recordings").absolutePath)
 }
