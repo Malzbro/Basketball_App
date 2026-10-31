@@ -68,6 +68,7 @@ The example shot is a miss with its release at **287.407 s**, which is rows **28
 3. Press **Ctrl+C**, go to the `Shot` sheet, click **A2**, and press **Ctrl+Alt+V** → choose
    **Values** → OK. (Values, not formulas, otherwise the formulas would point at the wrong rows.)
 4. Type headers in row 1: **A1** `time_s`, **B1** `angle_deg`, **C1** `gyro`, **D1** `accel`.
+   **Check:** row **201** is the release and should read about `287.3962`, `-62.29`, `11.23`, `71.14`.
 
 **Add helper columns**
 
@@ -81,27 +82,40 @@ The example shot is a miss with its release at **287.407 s**, which is rows **28
 
 **Chart 1: forearm angle**
 
-11. Select **E1:E501**, then hold **Ctrl** and select **B1:B501**.
-12. **Insert** → in Charts, click the **X Y (Scatter)** icon → **Scatter with Straight Lines**.
+11. Click an **empty cell** away from your data (e.g. **M2**), so Excel doesn't guess which
+    columns to use.
+12. **Insert** → in Charts, click the **X Y (Scatter)** icon → **Scatter with Straight Lines**
+    (the icon with lines and no dots). An empty chart appears.
     (Use Scatter, not "Line": a Line chart ignores the time values and spaces points evenly.)
-13. Add the −45° line: right-click the chart → **Select Data** → **Add**:
+13. Add the angle: right-click the chart → **Select Data** → **Add**. In each box, delete what's
+    there and select the cells with the mouse:
+    * Series name: `forearm angle`
+    * Series X values: **E2:E501** (time from release)
+    * Series Y values: **B2:B501** (angle)
+    * OK. (Don't click OK on the outer window yet.)
+
+    > If your line is a straight diagonal from −2 to 3 and the x axis runs 0–500, Excel used
+    > the wrong columns: in **Select Data**, click that series → **Edit** and set X and Y as above.
+14. Add the −45° line: still in **Select Data** → **Add**: right-click the chart → **Select Data** → **Add**:
     * Series name: `arm raised below -45°`
     * Series X values: select **E2:E501**
     * Series Y values: delete what's there and select **F2:F501**
     * OK.
-14. Add your tap: **Add** again, name `you tapped MISS`, X = **J2:J3**, Y = **K2:K3** → OK → OK.
-15. Make the threshold line dashed: click it → right-click → **Format Data Series** → paint-can
+15. Add your tap: **Add** again, name `you tapped MISS`, X = **J2:J3**, Y = **K2:K3** → OK → OK.
+16. Make the threshold line dashed: click it → right-click → **Format Data Series** → paint-can
     icon → **Line** → **Dash type**: dashes; color: gray.
-16. Fix the x axis: right-click the numbers under the chart → **Format Axis** → Bounds:
+17. Fix the x axis: right-click the numbers under the chart → **Format Axis** → Bounds:
     Minimum `-2`, Maximum `3`.
-17. Click the chart title and type `Forearm angle (°), negative = arm up`.
+18. If any line shows fat dots: click it → right-click → **Format Data Series** → paint-can →
+    **Marker** → **None**.
+19. Click the chart title and type `Forearm angle (°), negative = arm up`.
 
 **Charts 2 and 3: wrist rotation and acceleration**
 
-18. Same steps with **E** + **C** (gyro) and the line in **G**: title `Wrist rotation speed (rad/s)`.
-19. Same steps with **E** + **D** (accel) and the line in **H**: title `Acceleration (m/s²)`.
+20. Same steps with X = **E** and Y = **C** (gyro) and the line in **G**: title `Wrist rotation speed (rad/s)`.
+21. Same steps with X = **E** and Y = **D** (accel) and the line in **H**: title `Acceleration (m/s²)`.
     For the tap line in these two charts, use Y values of 0 and 15, or 0 and 80, so it fits.
-20. Stack the three charts on top of each other, with the same width, so the time lines up.
+22. Stack the three charts on top of each other, with the same width, so the time lines up.
 
 **What you should see:** the angle drops below −45° just before 0 and stays there until
 about +1.3 s (the follow-through). At 0 the rotation speed peaks around 11–12 rad/s and the
