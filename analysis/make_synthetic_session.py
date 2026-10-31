@@ -26,6 +26,14 @@ def bump(t: np.ndarray, center: float, width: float) -> np.ndarray:
     return np.exp(-0.5 * ((t - center) / width) ** 2)
 
 
+def plateau(t: np.ndarray, start: float, end: float, edge: float = 0.08) -> np.ndarray:
+    """Smooth step up at start and down at end (0..1)."""
+    def sigmoid(x: np.ndarray) -> np.ndarray:
+        return 0.5 * (1 + np.tanh(x / 2))  # same as 1 / (1 + e^-x), without overflow
+
+    return sigmoid((t - start) / edge) - sigmoid((t - end) / edge)
+
+
 def generate(minutes: float = 10, seed: int = 7) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Returns (raw, events) DataFrames in the watch's CSV column format."""
     rng = np.random.default_rng(seed)
@@ -34,7 +42,9 @@ def generate(minutes: float = 10, seed: int = 7) -> tuple[pd.DataFrame, pd.DataF
     t = np.arange(n) / RATE_HZ
     acc = np.zeros((n, 3)) + rng.normal(0, 0.15, (n, 3))
     gyro = rng.normal(0, 0.05, (n, 3))
-    pitch = np.full(n, -10.0)  # forearm slightly down at rest
+    # Forearm pitch: about +30 deg (hand lower than elbow) when not shooting. On a
+    # right wrist a raised shooting arm reads about -60 deg (see detector_proto).
+    pitch = np.full(n, 30.0)
 
     # Walking between shots: steps at ~1.8 Hz.
     walking = (np.sin(2 * np.pi * t / 37) > 0.3).astype(float)
@@ -48,16 +58,16 @@ def generate(minutes: float = 10, seed: int = 7) -> tuple[pd.DataFrame, pd.DataF
             acc[:, 1] += 9.0 * bump(t, c, 0.05)
             gyro[:, 0] += 4.0 * bump(t, c, 0.06)
 
-    # Shots: dip -> drive -> wrist flick -> quiet hold. Labels 1.5-4 s later.
+    # Shots: dip -> drive -> arm up with wrist flick + accel spike -> arm held up
+    # ~1.3 s (follow-through) -> arm down. Labels 1.5-4 s after the release.
     events = []
     centers = np.arange(8, t[-1] - 6, 22)
     for c in centers + rng.uniform(-3, 3, len(centers)):
         acc[:, 2] -= 3.5 * bump(t, c - 0.55, 0.12)          # dip
         acc[:, 2] += rng.uniform(8, 12) * bump(t, c - 0.15, 0.1)  # drive
         gyro[:, 2] += rng.uniform(9, 14) * bump(t, c, 0.04)  # release flick
-        pitch += 60 * bump(t, c, 0.35)                       # arm raised
-        quiet = (t > c + 0.1) & (t < c + 0.6)
-        gyro[quiet] *= 0.3
+        acc[:, 0] += rng.uniform(40, 80) * bump(t, c + 0.05, 0.02)  # release spike
+        pitch -= 92 * plateau(t, c - 0.05, c + rng.uniform(1.0, 1.6))  # arm raised and held
         label = "make" if rng.random() < 0.45 else "miss"
         events.append((c + rng.uniform(1.5, 4.0), label))
 

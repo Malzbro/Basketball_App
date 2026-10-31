@@ -41,16 +41,18 @@ def find_session(path_like: str) -> SessionPaths:
     """
     path = Path(path_like)
     if path.is_dir():
-        raws = sorted(path.glob("session_*_raw.csv"))
+        raws = sorted([*path.glob("session_*_raw.csv"), *path.glob("session_*_raw.zip")])
         if not raws:
             raise FileNotFoundError(f"No session_*_raw.csv files in {path}")
         path = raws[-1]
     name = path.name
-    for suffix in ("_raw.csv", "_events.csv", "_meta.json"):
+    for suffix in ("_raw.csv", "_raw.zip", "_events.csv", "_meta.json"):
         if name.endswith(suffix):
             name = name[: -len(suffix)]
     folder = path.parent
     raw = folder / f"{name}_raw.csv"
+    if not raw.exists():
+        raw = folder / f"{name}_raw.zip"  # a zipped raw CSV works too (pandas reads it directly)
     events = folder / f"{name}_events.csv"
     meta = folder / f"{name}_meta.json"
     if not raw.exists():

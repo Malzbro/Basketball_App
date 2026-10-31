@@ -13,7 +13,7 @@ It exports CSV/JSON you can analyze yourself or hand to Claude.
 |---|---|---|
 | 1 | Raw recorder: sensors → CSV, manual Make/Miss labels, screen-off recording | ✅ built |
 | 2 | Python analysis: plots, prototype detector, precision/recall, threshold suggestions | ✅ built |
-| 3 | On-device shot detection state machine, haptics, debug screen, CSV-fixture tests | ⏳ needs your recordings |
+| 3 | On-device shot detection state machine, haptics, debug screen, CSV-fixture tests | 🔜 detector designed from your data (F1 0.90), next: port to the watch |
 | 4 | Make/miss by wrist twist (pronation / supination), calibration, corrections | ⏳ |
 | 5 | Form score (0–100) vs your personal baseline, session consistency | ⏳ |
 | 6 | Shot location: drill mode and free mode | ⏳ |
@@ -272,7 +272,9 @@ Free up space on the watch after you've copied a session:
 adb shell rm /sdcard/Android/data/dev.malzbro.wristshot/files/sessions/session_20261028_181502_*
 ```
 
-`data/` is in `.gitignore`, so recordings don't end up on GitHub by accident.
+`data/` is in `.gitignore`, so recordings don't end up on GitHub by accident. Sessions you want
+to keep as test data go in `recordings/` (committed). A zipped raw file (`_raw.zip`) works too:
+the analysis reads it directly.
 
 **Size:** about 35–40 MB of raw CSV per hour at 100 Hz.
 
@@ -354,15 +356,14 @@ It prints four sections:
 1. **Timing check.** Sample rate, gaps, and whether raw and event timestamps share the same
    clock and the events fall inside the recording. `-> timestamps line up` means the Phase 1
    acceptance test passed.
-2. **Detector with current params.** The prototype detector (dip → drive → wrist-flick
-   release → follow-through hold) with **initial guess** thresholds, scored against your labels:
+2. **Detector with current params.** The prototype detector, scored against your labels:
    detected, true/false positives, missed, **precision**, **recall**, F1.
-3. **Your labeled shots vs. background motion.** For each label, the biggest wrist-flick peak
-   in the 6 s before it is taken as the release. The table shows feature percentiles for those
-   shots next to all other wrist peaks (dribbling, walking, fidgeting).
-4. **Suggested thresholds.** Values derived from that comparison, a sweep of the main release
-   threshold, and the score with the suggestions. They print as Kotlin `const val` lines ready
-   for Phase 3.
+3. **Your labeled shots vs. other arm raises.** For each label, the longest arm raise before it
+   is taken as the shot. The table shows feature percentiles for those shots next to every other
+   arm raise (rebounds, reaching up, unlabeled shots).
+4. **Suggested thresholds.** Values that let nearly all of your labeled shots through, a sweep
+   of the release threshold, and the score with the suggestions. They print as Kotlin
+   `const val` lines ready for Phase 3.
 
 Outputs are saved to `analysis/output/<session>/`:
 * `overview.png`: |accel|, |gyro| and forearm pitch over the whole session, with your labels
@@ -372,13 +373,39 @@ Outputs are saved to `analysis/output/<session>/`:
 * `labeled_shot_features.csv`, `detections.csv`, `suggested_params.txt`.
 
 Override any detector parameter from the command line to experiment, e.g.
-`--release-gyro-min 8 --drive-accel-min 14 --hold-min-s 0.1`.
+`--raise-pitch-max-deg -40 --hold-min-s 0.5 --release-accel-min 30`.
 `--label-before 8` lets labels come up to 8 s after the release (useful if you walk to rebound
 before tapping).
 
-> ⚠️ **No threshold in this repo is validated yet.** Every value in `DetectorParams`
-> (`analysis/detector_proto.py`) is an initial guess, and the code says so. Use the suggestions
-> from **your** recordings, and check them on a second session they weren't derived from.
+### How the detector works (from your first real session)
+
+`recordings/session_20261030_163316` (43 min, 144 labeled shots, watch on the right wrist)
+showed what a jump shot looks like at the wrist:
+
+1. **Release:** a sharp wrist flick (about 12 rad/s) and acceleration spike as the arm goes up.
+2. **Follow-through:** forearm pitch drops to about **−60°** and **stays there for about 1.3 s**.
+3. The arm comes down. In Phase 1 you then tapped the label about 2.2 s after the release.
+
+Dribbling, catching and walking also make big flicks and spikes, but with the forearm pointing
+down (pitch around +40°). So the detector looks for **a raised arm that is held**, and uses the
+flick and spike only to confirm it:
+
+| Parameter | Value | Meaning |
+|---|---|---|
+| `raise_pitch_max_deg` | −45° | arm counts as raised below this pitch |
+| `hold_min_s` | 0.3 s | arm must stay raised at least this long |
+| `release_gyro_min` | 8 rad/s | wrist flick within 0.5 s before the arm goes up |
+| `release_accel_min` | 20 m/s² | acceleration spike right after the flick |
+| `min_quiet_s` | 2 s | minimum time between shots |
+
+On that session: **139 of 144 shots detected (recall 97%), precision 85%, F1 0.90**. Tuned on
+the first half and tested on the second half, it scored F1 0.91, so it isn't just memorizing one
+stretch. Several of the "false positives" look exactly like shots and are probably shots that
+weren't labeled.
+
+> ⚠️ **Tuned on one session, by one shooter.** The pitch sign depends on which wrist the watch
+> is on and which way round it's worn (Phase 4 adds a calibration step). Check every new session
+> with `analyze_session.py`. `python -m pytest` fails if F1 on the recorded session drops below 0.85.
 
 To check the scripts run without a watch, generate a **fake** session (invented motion, never use
 it to pick thresholds):

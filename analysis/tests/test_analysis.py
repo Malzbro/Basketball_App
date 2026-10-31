@@ -1,5 +1,7 @@
 """Run from the analysis/ folder with:  python -m pytest"""
 
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -45,7 +47,7 @@ def test_alignment_report_flags_clock_mismatch(session):
 def test_detector_finds_synthetic_shots(session):
     raw, events = session
     p = dp.DetectorParams()
-    s = dp.score(dp.detect(dp.Signals.from_raw(raw, p.smooth_s), p), events, dp.MatchWindow())
+    s = dp.score(dp.detect(dp.Signals.from_raw(raw, p), p), events, dp.MatchWindow())
     assert s["recall"] == 1.0
     assert s["precision"] == 1.0
 
@@ -57,16 +59,60 @@ def test_match_prefers_latest_detection_before_label():
     assert missed == [1]
 
 
-def test_hold_duration():
-    t = np.arange(0, 2, 0.01)
-    gyro = np.zeros_like(t)
-    gyro[:50] = 10.0          # moving until 0.5 s
-    gyro[100:120] = 10.0      # moving again 1.0-1.2 s
-    sig = dp.Signals(t=t, gyro=gyro, acc=np.full_like(t, 9.8), pitch=np.zeros_like(t), rate_hz=100.0)
-    hold = dp.hold_duration(sig, 49, dp.DetectorParams(hold_gyro_max=3.0, hold_search_s=0.6))
-    assert hold == pytest.approx(0.49, abs=1e-9)  # quiet from 0.50 s to 0.99 s
+def make_signals(pitch: np.ndarray, gyro: np.ndarray, acc: np.ndarray) -> dp.Signals:
+    t = np.arange(len(pitch)) / 100.0
+    return dp.Signals(t=t, gyro=gyro, acc=acc, pitch=pitch, rate_hz=100.0)
+
+
+def test_arm_raise_with_flick_is_a_shot_and_without_is_not():
+    n = 400
+    pitch = np.full(n, 30.0)
+    pitch[100:230] = -60.0            # arm raised for 1.3 s
+    pitch[300:320] = -60.0            # brief raise, 0.2 s
+    gyro = np.full(n, 0.5)
+    gyro[98] = 12.0                   # flick as the arm goes up
+    gyro[299] = 12.0
+    acc = np.full(n, 9.8)
+    acc[101] = 60.0                   # release spike
+    acc[301] = 60.0
+    det = dp.detect(make_signals(pitch, gyro, acc), dp.DetectorParams())
+    assert det["t_release"].round(2).tolist() == [0.98, 2.99]
+    assert det["accepted"].tolist() == [True, False]
+    assert det["reject_reason"].tolist() == ["", "short_hold"]
+    assert det["hold_s"].iloc[0] == pytest.approx(1.3)
+
+
+def test_min_quiet_rejects_second_raise_too_soon():
+    n = 400
+    pitch = np.full(n, 30.0)
+    pitch[50:150] = -60.0
+    pitch[170:270] = -60.0            # starts 1.2 s after the first
+    gyro = np.full(n, 0.5)
+    gyro[[49, 169]] = 12.0
+    acc = np.full(n, 9.8)
+    acc[[51, 171]] = 60.0
+    det = dp.detect(make_signals(pitch, gyro, acc), dp.DetectorParams(min_quiet_s=2.0))
+    assert det["reject_reason"].tolist() == ["", "too_soon"]
 
 
 def test_best_plateau_picks_middle():
     sweep = pd.DataFrame({"release_gyro_min": [1.0, 2.0, 3.0, 4.0], "f1": [0.5, 0.9, 0.9, 0.4]})
     assert dp.best_plateau(sweep) == (2.0, 3.0, 2.5)
+
+
+RECORDINGS = Path(__file__).resolve().parents[2] / "recordings"
+# Real-data regression floor: the session the defaults were tuned on scored F1 0.90.
+MIN_F1_ON_RECORDING = 0.85
+
+
+@pytest.mark.parametrize("prefix", ["session_20261030_163316"])
+def test_detector_on_real_recording(prefix):
+    try:
+        paths = wio.find_session(str(RECORDINGS / prefix))
+    except FileNotFoundError:
+        pytest.skip(f"{prefix} not in recordings/")
+    raw = wio.load_raw(paths.raw)
+    events = wio.load_events(paths.events, raw.attrs["start_ns"])
+    p = dp.DetectorParams()
+    s = dp.score(dp.detect(dp.Signals.from_raw(raw, p), p), events, dp.MatchWindow())
+    assert s["f1"] >= MIN_F1_ON_RECORDING

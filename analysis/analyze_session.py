@@ -32,8 +32,6 @@ import detector_proto as dp
 import wristshot_io as wio
 
 SWEEP_STEPS = 25
-FEATURE_COLUMNS = ["peak_gyro", "peak_accel_drive", "min_accel_dip", "dip_to_release_s", "hold_s",
-                   "pitch_at_release_deg"]
 
 
 def parse_args() -> argparse.Namespace:
@@ -83,7 +81,7 @@ def report_timing(raw: pd.DataFrame, events: pd.DataFrame) -> None:
 
 def report_detector(sig: dp.Signals, events: pd.DataFrame, params: dp.DetectorParams,
                     window: dp.MatchWindow) -> tuple[pd.DataFrame, dict]:
-    print_section("2. Detector with current params (INITIAL GUESSES)")
+    print_section("2. Detector with current params")
     print(dp.params_as_kotlin(params))
     det = dp.detect(sig, params)
     s = dp.score(det, events, window)
@@ -95,23 +93,22 @@ def report_detector(sig: dp.Signals, events: pd.DataFrame, params: dp.DetectorPa
 
 def report_features(sig: dp.Signals, events: pd.DataFrame, params: dp.DetectorParams,
                     window: dp.MatchWindow) -> tuple[pd.DataFrame, pd.DataFrame]:
-    print_section("3. Labeled shots vs background motion")
-    shots = dp.labeled_shot_features(sig, events, params, window)
-    background = dp.background_features(sig, events, params, window)
-    print(f"Labeled shots ({len(shots)}): biggest gyro peak in the window before each label")
-    print(describe(shots, FEATURE_COLUMNS + ["label_delay_s"]).to_string() if len(shots) else "  (no labels)")
-    print(f"\nBackground peaks ({len(background)}): gyro peaks > {dp.BACKGROUND_PEAK_FLOOR} rad/s away from labels")
-    print(describe(background, FEATURE_COLUMNS).to_string() if len(background) else "  (none)")
+    print_section("3. Labeled shots vs other arm raises")
+    shots, background = dp.split_by_labels(sig, events, params, window)
+    print(f"Labeled shots ({len(shots)} of {len(events)} labels): the longest arm raise before each label")
+    print(describe(shots, dp.FEATURE_COLUMNS + ["label_delay_s"]).to_string() if len(shots) else "  (none found)")
+    print(f"\nOther arm raises ({len(background)}): not near any label (rebounds, reaching up, unlabeled shots)")
+    print(describe(background, dp.FEATURE_COLUMNS).to_string() if len(background) else "  (none)")
     if len(shots):
         print(f"\nlabel_delay_s = how long after the release you pressed the label button. "
               f"If it's often near {window.before_s:.0f}s, raise --label-before.")
     return shots, background
 
 
-def report_suggestions(sig: dp.Signals, events: pd.DataFrame, shots: pd.DataFrame, background: pd.DataFrame,
+def report_suggestions(sig: dp.Signals, events: pd.DataFrame, shots: pd.DataFrame,
                        params: dp.DetectorParams, window: dp.MatchWindow) -> dp.DetectorParams:
     print_section("4. Suggested thresholds (from YOUR data; still verify on another session)")
-    tuned, notes = dp.suggest_params(shots, background, events, params)
+    tuned, notes = dp.suggest_params(shots, params)
     for n in notes:
         print("  note:", n)
     print(dp.params_as_kotlin(tuned))
@@ -143,7 +140,7 @@ def main() -> None:
     window = dp.MatchWindow(before_s=args.label_before, after_s=args.label_after)
     overrides = {f.name: getattr(args, f.name) for f in fields(dp.DetectorParams) if getattr(args, f.name) is not None}
     params = replace(dp.DetectorParams(), **overrides)
-    sig = dp.Signals.from_raw(raw, params.smooth_s)
+    sig = dp.Signals.from_raw(raw, params)
     out_dir = Path(args.out) / paths.prefix
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -153,8 +150,8 @@ def main() -> None:
 
     report_timing(raw, events)
     det, s = report_detector(sig, events, params, window)
-    shots, background = report_features(sig, events, params, window)
-    tuned = report_suggestions(sig, events, shots, background, params, window)
+    shots, _ = report_features(sig, events, params, window)
+    tuned = report_suggestions(sig, events, shots, params, window)
 
     det.to_csv(out_dir / "detections.csv", index=False)
     (out_dir / "suggested_params.txt").write_text("\n".join(f"{k} = {v}" for k, v in asdict(tuned).items()) + "\n")
