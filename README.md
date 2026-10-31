@@ -8,7 +8,8 @@ It exports CSV/JSON you can analyze yourself or hand to Claude.
 > **Current status: Phases 1–3 are done.** The watch records raw sensor data and your Make/Miss
 > labels, and **detects your shots live** (a short buzz per shot) with a detector tuned on your
 > first real session: 139 of 144 shots found. The Python toolkit plots sessions and re-checks
-> the detector. **New to the graphs? Start with [docs/reading_the_plots.md](docs/reading_the_plots.md).**
+> the detector. **New to the graphs? Start with [docs/reading_the_plots.md](docs/reading_the_plots.md);
+> to build them yourself in Excel, see [docs/excel_guide.md](docs/excel_guide.md).**
 
 | Phase | What | Status |
 |---|---|---|
@@ -77,6 +78,7 @@ WristShot/
 │   └── tests/                       pytest tests (run: python -m pytest)
 ├── recordings/               real sessions kept as test data (the detector tests run on these)
 ├── docs/reading_the_plots.md how to read every graph, with your data
+├── docs/excel_guide.md       make the same graphs yourself in Excel
 ├── scripts/pull_sessions.sh  copies sessions from the watch to ./data/sessions
 └── gradle/libs.versions.toml all library versions in one place
 ```
@@ -399,7 +401,8 @@ data: [docs/reading_the_plots.md](docs/reading_the_plots.md).**
 * `overview_zoom.png`: the first 3 minutes (or `--zoom START END`); `overview.png`: whole session.
 * `shot_snippets.png`: all labeled shots overlaid, lined up at the release. Tight bundles of
   lines mean consistent motion.
-* `labeled_shot_features.csv`, `detections.csv`, `suggested_params.txt`.
+* `labeled_shot_features.csv` and `other_arm_raises.csv` (one row per raise, open them in
+  Excel), `detections.csv`, `suggested_params.txt`.
 
 Override any detector parameter from the command line to experiment, e.g.
 `--raise-pitch-max-deg -40 --hold-min-s 0.5 --release-accel-min 30`.

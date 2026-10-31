@@ -169,6 +169,7 @@ def main() -> None:
                         out_dir / "overview_zoom.png", xlim=zoom)
     if len(shots):
         shots.to_csv(out_dir / "labeled_shot_features.csv", index=False)
+        background.to_csv(out_dir / "other_arm_raises.csv", index=False)
         plots.plot_snippets(raw, shots, out_dir / "shot_snippets.png")
         plots.plot_shot_anatomy(raw, typical_shot(shots), params, out_dir / "shot_anatomy.png")
         plots.plot_feature_histograms(shots, background, params, out_dir / "feature_histograms.png")
