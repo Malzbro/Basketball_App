@@ -2,6 +2,8 @@ package dev.malzbro.wristshot.recording
 
 import android.os.SystemClock
 import dev.malzbro.wristshot.config.AppConfig
+import dev.malzbro.wristshot.core.detector.Candidate
+import dev.malzbro.wristshot.core.detector.DetectorState
 import dev.malzbro.wristshot.core.model.EventLabel
 import dev.malzbro.wristshot.core.model.EventSource
 import dev.malzbro.wristshot.core.session.SessionCounts
@@ -24,6 +26,13 @@ data class SessionUiState(
     val lastLabelAtMs: Long = 0L,
     val lastSession: SessionMetadata? = null,
     val backKeyMarksShot: Boolean = AppConfig.BACK_KEY_MARKS_SHOT_DEFAULT,
+    /** Shots found by the live detector this session. */
+    val detectedShots: Int = 0,
+    /** The last arm raise the detector evaluated (shot or rejected). */
+    val lastCandidate: Candidate? = null,
+    val detectorState: DetectorState = DetectorState.IDLE,
+    /** Live smoothed forearm pitch, deg. */
+    val pitchDeg: Double = Double.NaN,
     val error: String? = null,
 )
 
@@ -48,6 +57,9 @@ object SessionRepository {
                 counts = SessionCounts(),
                 samplesWritten = 0L,
                 lastLabel = null,
+                detectedShots = 0,
+                lastCandidate = null,
+                detectorState = DetectorState.IDLE,
                 error = null,
             )
         }
@@ -57,9 +69,29 @@ object SessionRepository {
         _state.update { it.copy(samplesWritten = samplesWritten) }
     }
 
+    internal fun onCandidate(candidate: Candidate) {
+        _state.update {
+            it.copy(
+                lastCandidate = candidate,
+                detectedShots = it.detectedShots + if (candidate.isShot) 1 else 0,
+            )
+        }
+    }
+
+    internal fun onDetectorUpdate(state: DetectorState, pitchDeg: Double) {
+        _state.update { it.copy(detectorState = state, pitchDeg = pitchDeg) }
+    }
+
     internal fun onStopped(metadata: SessionMetadata?) {
         recorder = null
-        _state.update { it.copy(isRecording = false, lastSession = metadata ?: it.lastSession) }
+        _state.update {
+            it.copy(
+                isRecording = false,
+                lastSession = metadata ?: it.lastSession,
+                detectorState = DetectorState.IDLE,
+                pitchDeg = Double.NaN,
+            )
+        }
     }
 
     internal fun onError(message: String) {

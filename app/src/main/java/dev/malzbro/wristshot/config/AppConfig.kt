@@ -22,6 +22,12 @@ object AppConfig {
     /** How long the last label stays highlighted on the label screen. */
     const val LABEL_FLASH_MS: Long = 1_200L
 
+    /** Buzz length when the detector finds a shot. */
+    const val SHOT_BUZZ_MS: Long = 80L
+
+    /** How often the debug screen's live arm angle refreshes (state changes show immediately). */
+    const val DETECTOR_UI_INTERVAL_MS: Long = 200L
+
     /** Max time to wait for the recorder thread to finish writing when stopping. */
     const val STOP_TIMEOUT_MS: Long = 5_000L
 

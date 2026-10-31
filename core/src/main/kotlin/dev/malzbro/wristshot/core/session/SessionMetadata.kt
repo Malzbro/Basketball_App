@@ -31,6 +31,10 @@ data class SessionMetadata(
     val maxGapMs: Double,
     val dropouts: Int,
     val counts: SessionCounts,
+    /** Shots found by the live detector (labels are in [counts]). */
+    val detectedShots: Int = 0,
+    /** Detector thresholds used, so a session can be re-analyzed with the same values. */
+    val detector: Map<String, Double> = emptyMap(),
 ) {
     val durationS: Double get() = (stopElapsedNs - startElapsedNs) / 1e9
 
@@ -56,6 +60,8 @@ data class SessionMetadata(
             "{\"makes\": ${counts.makes}, \"misses\": ${counts.misses}, " +
                 "\"unlabeled\": ${counts.unlabeled}, \"shots\": ${counts.shots}}",
         )
+        field("detected_shots", detectedShots.toString())
+        field("detector", detector.entries.joinToString(", ", "{", "}") { (k, v) -> "${str(k)}: ${num(v)}" })
         append("  \"sensors\": [")
         sensors.forEachIndexed { i, s ->
             if (i > 0) append(",")

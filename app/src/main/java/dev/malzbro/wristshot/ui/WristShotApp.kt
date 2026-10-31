@@ -13,9 +13,10 @@ import dev.malzbro.wristshot.recording.SessionRepository
 private object Routes {
     const val HOME = "home"
     const val LABEL = "label"
+    const val DEBUG = "debug"
 }
 
-/** UI layer root: two screens, swipe right to go back. */
+/** UI layer root: home, labeling and detector debug screens; swipe right to go back. */
 @Composable
 fun WristShotApp(onStartSession: () -> Unit, onStopSession: () -> Unit) {
     val state by SessionRepository.state.collectAsStateWithLifecycle()
@@ -33,6 +34,7 @@ fun WristShotApp(onStartSession: () -> Unit, onStopSession: () -> Unit) {
                     },
                     onStop = onStopSession,
                     onOpenLabeling = { navController.navigate(Routes.LABEL) },
+                    onOpenDebug = { navController.navigate(Routes.DEBUG) },
                     onBackKeyMarksShotChange = SessionRepository::setBackKeyMarksShot,
                 )
             }
@@ -42,6 +44,9 @@ fun WristShotApp(onStartSession: () -> Unit, onStopSession: () -> Unit) {
                     onDone = { navController.popBackStack() },
                     onLabel = { label, source -> view.recordLabelWithHaptic(label, source) },
                 )
+            }
+            composable(Routes.DEBUG) {
+                DebugScreen(state = state)
             }
         }
     }

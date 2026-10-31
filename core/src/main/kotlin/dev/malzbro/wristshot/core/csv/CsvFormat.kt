@@ -1,6 +1,7 @@
 package dev.malzbro.wristshot.core.csv
 
 import dev.malzbro.wristshot.core.config.RecorderConfig
+import dev.malzbro.wristshot.core.detector.Candidate
 import dev.malzbro.wristshot.core.model.EventLabel
 import dev.malzbro.wristshot.core.model.EventSource
 import dev.malzbro.wristshot.core.model.RawSample
@@ -21,8 +22,16 @@ object CsvFormat {
 
     val EVENT_COLUMNS = TIME_COLUMNS + listOf("wall_time", "label", "source")
 
+    /** One row per arm raise the detector evaluated; names match the Python analysis. */
+    val DETECTION_COLUMNS = TIME_COLUMNS + listOf(
+        "is_shot", "reject_reason",
+        "peak_gyro", "release_accel", "hold_s", "min_pitch_deg",
+        "peak_accel_drive", "min_accel_dip", "dip_to_release_s",
+    )
+
     val RAW_HEADER: String = RAW_COLUMNS.joinToString(",")
     val EVENTS_HEADER: String = EVENT_COLUMNS.joinToString(",")
+    val DETECTIONS_HEADER: String = DETECTION_COLUMNS.joinToString(",")
 
     fun appendRawRow(sb: StringBuilder, s: RawSample, sessionStartNs: Long) {
         appendTimes(sb, s.tNs, sessionStartNs)
@@ -49,7 +58,24 @@ object CsvFormat {
         return sb.toString()
     }
 
-    /** The two time columns shared by both files: t_ns, t_rel_s. */
+    fun detectionRow(c: Candidate, sessionStartNs: Long): String {
+        val f = c.features
+        val sb = StringBuilder()
+        appendTimes(sb, f.tReleaseNs, sessionStartNs)
+        sb.append(',').append(c.isShot)
+        sb.append(',').append(c.rejectReasons.joinToString("+") { it.csvName })
+        for (v in doubleArrayOf(
+            f.peakGyro, f.releaseAccel, f.holdS, f.minPitchDeg,
+            f.peakAccelDrive, f.minAccelDip, f.dipToReleaseS,
+        )) {
+            sb.append(',')
+            appendFixed(sb, v, RecorderConfig.CSV_VALUE_DECIMALS)
+        }
+        sb.append('\n')
+        return sb.toString()
+    }
+
+    /** The two time columns shared by all files: t_ns, t_rel_s. */
     private fun appendTimes(sb: StringBuilder, tNs: Long, sessionStartNs: Long) {
         sb.append(tNs).append(',')
         appendFixed(sb, (tNs - sessionStartNs) / 1e9, RecorderConfig.CSV_TIME_DECIMALS)

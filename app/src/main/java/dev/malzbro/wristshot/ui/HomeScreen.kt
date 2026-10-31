@@ -39,6 +39,7 @@ fun HomeScreen(
     onStart: () -> Unit,
     onStop: () -> Unit,
     onOpenLabeling: () -> Unit,
+    onOpenDebug: () -> Unit,
     onBackKeyMarksShotChange: (Boolean) -> Unit,
 ) {
     val listState = rememberScalingLazyListState()
@@ -66,6 +67,9 @@ fun HomeScreen(
                 Text(text = "Shots ${c.shots}   ✓${c.makes}  ✗${c.misses}", style = MaterialTheme.typography.body1)
             }
             item {
+                Text(text = "Detected ${state.detectedShots}", style = MaterialTheme.typography.caption1)
+            }
+            item {
                 Chip(
                     onClick = if (state.isRecording) onStop else onStart,
                     label = { Text(if (state.isRecording) "Stop session" else "Start session") },
@@ -85,6 +89,15 @@ fun HomeScreen(
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
+            }
+            item {
+                Chip(
+                    onClick = onOpenDebug,
+                    label = { Text("Detector debug") },
+                    secondaryLabel = { Text("Live state, last shot") },
+                    colors = ChipDefaults.secondaryChipColors(),
+                    modifier = Modifier.fillMaxWidth(),
+                )
             }
             item {
                 ToggleChip(
@@ -110,7 +123,8 @@ fun HomeScreen(
 private fun LastSessionText(last: SessionMetadata) {
     Text(
         text = "Last session\n${last.sessionId.removePrefix("session_")}\n" +
-            "${formatElapsed((last.durationS * 1000).toLong())} · ${last.counts.shots} shots\n" +
+            "${formatElapsed((last.durationS * 1000).toLong())} · ${last.counts.shots} labeled · " +
+            "${last.detectedShots} detected\n" +
             String.format(Locale.US, "%.0f Hz · %d gaps", last.meanSampleRateHz, last.dropouts),
         style = MaterialTheme.typography.caption2,
         textAlign = TextAlign.Center,
@@ -134,5 +148,5 @@ private fun rememberSessionElapsedMs(state: SessionUiState): Long {
 @Preview(device = WearDevices.LARGE_ROUND, showSystemUi = true)
 @Composable
 private fun HomeScreenPreview() {
-    HomeScreen(SessionUiState(), {}, {}, {}, {})
+    HomeScreen(SessionUiState(), {}, {}, {}, {}, {})
 }

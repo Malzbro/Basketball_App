@@ -14,6 +14,8 @@ import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import dev.malzbro.wristshot.config.AppConfig
 import dev.malzbro.wristshot.core.config.RecorderConfig
+import dev.malzbro.wristshot.core.detector.Candidate
+import dev.malzbro.wristshot.core.detector.DetectorState
 
 /**
  * Foreground service that owns the [SessionRecorder].
@@ -48,11 +50,7 @@ class RecordingService : Service() {
         // Must be called promptly after startForegroundService().
         startInForeground(SystemClock.elapsedRealtime())
 
-        val r = SessionRecorder(
-            context = this,
-            onProgress = SessionRepository::onProgress,
-            onError = SessionRepository::onError,
-        )
+        val r = SessionRecorder(this, recorderListener(ShotHaptics(this)))
         try {
             r.start()
         } catch (e: Exception) {
@@ -69,6 +67,21 @@ class RecordingService : Service() {
                 acquire(RecorderConfig.WAKE_LOCK_TIMEOUT_MS)
             }
         SessionRepository.onStarted(r)
+    }
+
+    /** Forwards recorder events to the UI state, and buzzes on each detected shot. */
+    private fun recorderListener(haptics: ShotHaptics) = object : RecorderListener {
+        override fun onProgress(samplesWritten: Long) = SessionRepository.onProgress(samplesWritten)
+
+        override fun onError(message: String) = SessionRepository.onError(message)
+
+        override fun onCandidate(candidate: Candidate) {
+            if (candidate.isShot) haptics.shotDetected()
+            SessionRepository.onCandidate(candidate)
+        }
+
+        override fun onDetectorUpdate(state: DetectorState, pitchDeg: Double) =
+            SessionRepository.onDetectorUpdate(state, pitchDeg)
     }
 
     private fun stopRecording() {

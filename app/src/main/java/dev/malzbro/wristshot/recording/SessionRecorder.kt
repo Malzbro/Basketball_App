@@ -10,6 +10,7 @@ import android.util.Log
 import dev.malzbro.wristshot.BuildConfig
 import dev.malzbro.wristshot.config.AppConfig
 import dev.malzbro.wristshot.core.config.RecorderConfig
+import dev.malzbro.wristshot.core.detector.ShotDetector
 import dev.malzbro.wristshot.core.model.EventLabel
 import dev.malzbro.wristshot.core.model.EventSource
 import dev.malzbro.wristshot.core.session.SessionCounts
@@ -24,7 +25,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 /**
- * Records one session: sensors -> CSV files.
+ * Records one session: sensors -> CSV files, with live shot detection.
  *
  * All sensor callbacks and all file writes happen on one background thread
  * ("recorder thread"), so nothing needs locks and the UI never waits on storage.
@@ -32,8 +33,7 @@ import java.util.concurrent.TimeUnit
  */
 class SessionRecorder(
     private val context: Context,
-    private val onProgress: (samplesWritten: Long) -> Unit,
-    private val onError: (message: String) -> Unit,
+    private val listener: RecorderListener,
 ) {
     private val thread = HandlerThread("WristShotRecorder")
     private lateinit var handler: Handler
@@ -42,6 +42,16 @@ class SessionRecorder(
     private lateinit var sensors: MotionSensorSource
     private lateinit var startWallTime: String
     private var writeFailed = false
+
+    // Detection runs on the recorder thread too, right after each sample is written.
+    private val detector = ShotDetector { candidate ->
+        guarded { writer.writeDetection(candidate) }
+        if (candidate.isShot) detectedShots++
+        listener.onCandidate(candidate)
+    }
+    private var detectedShots = 0
+    private var lastDetectorState = detector.state
+    private var lastDetectorUpdateNs = 0L
 
     /** Session start on the sensor clock (SystemClock.elapsedRealtimeNanos). */
     var startElapsedNs: Long = 0L
@@ -54,6 +64,8 @@ class SessionRecorder(
         val sensorManager = context.getSystemService(SensorManager::class.java)
         sensors = MotionSensorSource(sensorManager) { sample ->
             guarded { writer.writeSample(sample) }
+            detector.onSample(sample)
+            reportDetectorState(sample.tNs)
         }
         check(sensors.hasAccelerometer) { "This watch has no accelerometer" }
 
@@ -64,6 +76,7 @@ class SessionRecorder(
         writer = SessionCsvWriter(
             raw = files.raw.bufferedWriter(bufferSize = RecorderConfig.WRITE_BUFFER_CHARS),
             events = files.events.bufferedWriter(),
+            detections = files.detections.bufferedWriter(),
             sessionStartNs = startElapsedNs,
         )
 
@@ -109,10 +122,21 @@ class SessionRecorder(
         return if (finished) metadata else null
     }
 
+    /** Tells the UI about state changes at once, and the live arm angle a few times per second. */
+    private fun reportDetectorState(nowNs: Long) {
+        val state = detector.state
+        val due = nowNs - lastDetectorUpdateNs >= AppConfig.DETECTOR_UI_INTERVAL_MS * 1_000_000L
+        if (state != lastDetectorState || due) {
+            lastDetectorState = state
+            lastDetectorUpdateNs = nowNs
+            listener.onDetectorUpdate(state, detector.pitchDeg)
+        }
+    }
+
     private val periodicFlush = object : Runnable {
         override fun run() {
             guarded { writer.flush() }
-            onProgress(writer.stats.count)
+            listener.onProgress(writer.stats.count)
             handler.postDelayed(this, RecorderConfig.FLUSH_INTERVAL_MS)
         }
     }
@@ -135,6 +159,8 @@ class SessionRecorder(
             maxGapMs = stats.maxGapNs / 1e6,
             dropouts = stats.dropouts,
             counts = counts,
+            detectedShots = detectedShots,
+            detector = detector.config.toMap(),
         )
     }
 
@@ -146,7 +172,7 @@ class SessionRecorder(
             Log.e(TAG, "Write failed", e)
             if (!writeFailed) {
                 writeFailed = true
-                onError("Write failed: ${e.message}")
+                listener.onError("Write failed: ${e.message}")
             }
         }
     }

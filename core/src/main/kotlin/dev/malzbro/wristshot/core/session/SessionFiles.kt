@@ -8,9 +8,16 @@ import java.time.format.DateTimeFormatter
  * File names for one session, e.g.
  *   sessions/session_20261028_181502_raw.csv
  *   sessions/session_20261028_181502_events.csv
+ *   sessions/session_20261028_181502_detections.csv
  *   sessions/session_20261028_181502_meta.json
  */
-data class SessionFiles(val id: String, val raw: File, val events: File, val meta: File) {
+data class SessionFiles(
+    val id: String,
+    val raw: File,
+    val events: File,
+    val detections: File,
+    val meta: File,
+) {
     companion object {
         private val ID_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss")
 
@@ -22,6 +29,7 @@ data class SessionFiles(val id: String, val raw: File, val events: File, val met
                 id = id,
                 raw = File(dir, "${id}_raw.csv"),
                 events = File(dir, "${id}_events.csv"),
+                detections = File(dir, "${id}_detections.csv"),
                 meta = File(dir, "${id}_meta.json"),
             )
         }
