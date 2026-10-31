@@ -1,0 +1,23 @@
+{
+  "session_id": "session_20261030_163316",
+  "app_version": "0.1.0-phase1",
+  "device_model": "samsung SM-L300",
+  "android_sdk": 36,
+  "start_wall_time": "2026-10-30T16:33:16.226",
+  "start_elapsed_ns": 157484594958159,
+  "stop_elapsed_ns": 160083737752300,
+  "duration_s": 2599.142794141,
+  "requested_sampling_period_us": 10000,
+  "max_report_latency_us": 200000,
+  "sample_count": 259518,
+  "mean_sample_rate_hz": 99.84911555651297,
+  "max_gap_ms": 20.056616,
+  "dropouts": 0,
+  "counts": {"makes": 50, "misses": 94, "unlabeled": 0, "shots": 144},
+  "sensors": [
+    {"role": "accelerometer", "name": "LSM6DSV Accelerometer", "vendor": "STM", "type": 1, "max_range": 78.45320129394531, "resolution": 0.002394201699644327, "min_delay_us": 10000},
+    {"role": "gyroscope", "name": "LSM6DSO Gyroscope", "vendor": "STM", "type": 4, "max_range": 17.453641891479492, "resolution": 0.0012217304902151227, "min_delay_us": 10000},
+    {"role": "gravity", "name": "Gravity Sensor", "vendor": "AOSP", "type": 9, "max_range": 19.613300323486328, "resolution": 0.002394201699644327, "min_delay_us": 10000},
+    {"role": "game_rotation_vector", "name": "Game Rotation Vector", "vendor": "Samsung Electronics", "type": 15, "max_range": 1.0, "resolution": 5.9604644775390625E-8, "min_delay_us": 10000}
+  ]
+}
