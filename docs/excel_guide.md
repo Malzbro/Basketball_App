@@ -1,7 +1,8 @@
 # Making the graphs yourself in Excel
 
 Step by step, using your session `session_20261030_163316`. Written for Excel 365 /
-Excel 2019+ on Windows. What each graph means is explained in
+Excel 2019+ on Windows. Parts 2–5 rebuild the four figures in [reading_the_plots.md](reading_the_plots.md).
+What each graph means is explained in
 [reading_the_plots.md](reading_the_plots.md).
 
 Your raw values will be a little higher and jumpier than in the Python plots
@@ -179,6 +180,69 @@ below 0.3 s. That gap is why the detector requires a hold of at least **0.3 s**.
 
 To do the flick or the spike instead, change `D:D` to `B:B` (flick; bins of 1, from 0 to 20)
 or `C:C` (spike; bins of 5, from 0 to 120), and change the `0.1` step to match.
+
+---
+
+## Part 5: All your shots on top of each other (like `shot_snippets.png`)
+
+Each line in this chart is one shot: the 3 seconds around its release (1.5 s before to
+1.5 s after), shifted so every release sits at 0. Instead of copying 40 blocks of rows
+by hand, formulas look them up for you.
+
+**Prepare (once)**
+
+1. Rename your data sheet (the one with columns P, Q, R from Part 1) to `Data`:
+   double-click its tab, type `Data`, Enter.
+2. Make sure `session_20261030_163316_shot_features.csv` is in the same workbook as a sheet
+   named `shots` (Part 4, step 1: right-click its tab → **Move or Copy** → To book:
+   `my_session.xlsx`, then rename). Column **A** of `shots` is each shot's release time.
+
+**Build the lookup table**
+
+3. Add a sheet named `SnipAngle`.
+4. **A1:** `offset_s`. **A2:** `=(ROW()-152)/100`, then fill down to **A302**.
+   Column A now runs −1.5, −1.49, … 0 (row 152) … 1.5: the time relative to the release.
+5. **B1:** `=INDEX(shots!$A$2:$A$41,COLUMN()-1)`, then fill right to **AO1**.
+   Row 1 now holds the release times of your first 40 shots, one per column (5.06,
+   47.312, …).
+6. **B2:** `=INDEX(Data!$P:$P,MATCH(B$1+$A2,Data!$B:$B,1))`
+   This means: *find the row in Data whose time is closest to (release + offset), and give
+   me its angle.* The `$` signs keep it pointing at the right row and column when copied.
+7. Select **B2**, copy it (**Ctrl+C**), select **B2:AO302**, and paste (**Ctrl+V**). That's
+   40 columns × 301 rows; it may take a few seconds to calculate.
+8. **Check:** **B152** (shot 1 at its release) ≈ `-64.97`, **B2** ≈ `18.97`,
+   **C152** (shot 2) ≈ `-60.02`.
+
+**Make the chart**
+
+9. Select **A1:AO302** → **Insert** → **X Y (Scatter)** → **Scatter with Straight Lines**.
+   Excel uses column A as time and makes one line per shot: 40 lines.
+10. Too colorful? Click the chart → **Chart Design** → **Change Colors** → pick a
+    **Monochromatic** palette, so all lines are shades of one color.
+11. Delete the legend (click it, press **Delete**): 40 entries aren't useful.
+12. Right-click the x-axis numbers → **Format Axis** → Minimum `-1.5`, Maximum `1.5`.
+13. Title: `Forearm angle, 40 shots lined up at the release`.
+
+**The other two rows**
+
+14. Right-click the `SnipAngle` tab → **Move or Copy** → tick **Create a copy** → OK.
+    Rename the copy `SnipGyro`.
+15. On `SnipGyro`, select **B2:AO302**, press **Ctrl+H** (Find & Replace), Find
+    `Data!$P:$P`, Replace with `Data!$Q:$Q` → **Replace All**. The chart on that sheet now
+    shows wrist rotation (check: **B152** ≈ `9.54`). Retitle it.
+16. Same again for acceleration: copy to `SnipAccel`, replace with `Data!$R:$R`.
+
+**Coloring makes vs misses (optional)**
+
+Excel colors each line separately, so this takes one click per line:
+check row 2 of `shots` onward, column `label` (I), to see which shot is which. Click a line →
+right-click → **Format Data Series** → **Line** → **Color**. Shots 1–40 are 18 makes and
+22 misses. A quicker alternative: two charts, one with only make columns and one with only
+miss columns.
+
+**What you should see:** all 40 lines follow nearly the same path: the gather (rotation bump
+around −0.5 s), the dip just before 0, the release at 0, and the arm held at about −60°
+until about +1 s. The tighter the bundle, the more consistent your shot.
 
 ---
 
